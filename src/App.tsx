@@ -40,7 +40,7 @@ export default function App() {
   const [updates, setUpdates] = useState<DisplayBpm[]>([])
   const [alwaysOnTop, setAlwaysOnTop] = useState<boolean>(false)
   const [viz, setViz] = useState<AudioViz | null>(null)
-  const [vizMode, setVizMode] = useState<'wave'|'bars'|'radial'>('wave')
+  const [vizMode, setVizMode] = useState<'wave'|'bars'|'waterfall'>('wave')
 
   useEffect(() => {
     let removeListener: (() => void) | null = null
@@ -106,19 +106,16 @@ export default function App() {
   }
 
   return (
-    <main style={{height:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:16,background:'#0b0f14',color:'#e6f1ff'}}>
-      <h1 style={{margin:0,color:'#8aa4c1',fontSize:18}}>BPM</h1>
-      <div style={{fontSize:96,fontWeight:700,letterSpacing:2,opacity:dim}}>{bpm == null ? '—' : Math.round(bpm)}</div>
-      <div style={{fontSize:14,color:'#6b829e'}}>{label} · 置信度：{confLabel}</div>
-      <div style={{width:240,height:8,background:'#1a2633',borderRadius:4,overflow:'hidden'}}>
-        <div style={{height:'100%',width:`${Math.round((level||0)*100)}%`,background:'#2ecc71',transition:'width 120ms'}} />
-      </div>
+    <main style={{height:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:16,background:'#14060a',color:'#ffffff'}}>
+      <h1 style={{margin:0,color:'#eb1a50',fontSize:18}}>BPM</h1>
+      <div style={{fontSize:96,fontWeight:700,letterSpacing:2,opacity:dim}}>{bpm == null ? 0 : Math.round(bpm)}</div>
+      <div style={{fontSize:14,color:'#f3a0b3'}}>{label} · 置信度：{confLabel}</div>
 
       {/* 简易波形可视化 */}
-      <VizPanel viz={viz} mode={vizMode} onToggle={() => setVizMode(m => m==='wave'?'bars':m==='bars'?'radial':'wave')} />
+      <VizPanel viz={viz} mode={vizMode} onToggle={() => setVizMode(m => m==='wave' ? 'bars' : (m==='bars' ? 'waterfall' : 'wave'))} />
 
       <div style={{position:'fixed',right:12,top:12,display:'flex',gap:8}}>
-        <button onClick={toggleAlwaysOnTop} style={{background: alwaysOnTop ? '#2f4f1f' : '#12202f',color:'#8aa4c1',border:'1px solid #243447',borderRadius:6,padding:'6px 10px',cursor:'pointer'}}>
+        <button onClick={toggleAlwaysOnTop} style={{background: alwaysOnTop ? '#c21441' : '#eb1a50',color:'#ffffff',border:'1px solid #c21441',borderRadius:6,padding:'6px 10px',cursor:'pointer'}}>
           {alwaysOnTop ? '已置顶' : '置顶'}
         </button>
       </div>
@@ -134,13 +131,13 @@ function sampleRateLabel(sr: number) {
   return sr || 48000
 }
 
-function VizPanel({ viz, mode, onToggle }: { viz: AudioViz | null, mode: 'wave'|'bars'|'radial', onToggle: () => void }) {
+function VizPanel({ viz, mode, onToggle }: { viz: AudioViz | null, mode: 'wave'|'bars'|'waterfall', onToggle: () => void }) {
   const h = 120
   const w = 360
-  const bg = '#0f1621'
-  const grid = '#152234'
-  const line = '#4aa3ff'
-  const accent = '#2ecc71'
+  const bg = '#1a0a0f'
+  const grid = '#3a0b17'
+  const line = '#eb1a50'
+  const accent = '#eb1a50'
   const rmsRaw = viz?.rms ?? 0
   const samples = viz?.samples ?? []
   const silentCut = 0.015
@@ -224,42 +221,86 @@ function VizPanel({ viz, mode, onToggle }: { viz: AudioViz | null, mode: 'wave'|
     return <>{elems}</>
   }
 
-  function renderRadial() {
-    // 把样本映射为极坐标花瓣
-    const cx = Math.floor(w / 2)
-    const cy = Math.floor(h / 2)
-    const radius = Math.min(cx, cy) - 4
-    const petals = 64
-    const step = Math.max(1, Math.floor(smoothSamples.length / petals))
-    const elems: JSX.Element[] = []
-    for (let p = 0; p < petals; p++) {
-      const i0 = p * step
+  // Waterfall：把每帧样本折叠成 bands 段能量，维护历史并渲染热力网格
+  const [hist, setHist] = React.useState<number[][]>([])
+  const bands = 16
+  const historyLen = 80
+  const gap = 1
+  const cellW = 4
+  const wfW = Math.min(w, historyLen * (cellW + gap) + gap)
+  const wfH = Math.min(h, bands * (cellW + gap) + gap)
+  const wfOffsetX = Math.max(0, Math.floor((w - wfW) / 2))
+  const wfOffsetY = Math.max(0, Math.floor((h - wfH) / 2))
+  // 将一帧样本折叠为 bands 段能量
+  const frameBands = React.useMemo(() => {
+    const out = new Array(bands).fill(0)
+    if (!smoothSamples.length) return out
+    const step = Math.max(1, Math.floor(smoothSamples.length / bands))
+    for (let b = 0; b < bands; b++) {
+      const i0 = b * step
       const i1 = Math.min(smoothSamples.length, i0 + step)
       let acc = 0, cnt = 0
       for (let i = i0; i < i1; i++) { acc += Math.abs(smoothSamples[i] || 0); cnt++ }
       const v = cnt ? acc / cnt : 0
-      const vv = Math.min(1, v * gain)
-      const theta = (p / petals) * Math.PI * 2
-      const r = radius * (0.35 + 0.65 * vv)
-      const x = cx + Math.cos(theta) * r
-      const y = cy + Math.sin(theta) * r
-      elems.push(<line key={p} x1={cx} y1={cy} x2={x} y2={y} stroke={line} strokeWidth={2} strokeLinecap="round" opacity={0.9} />)
+      out[b] = Math.min(1, v * gain)
     }
-    return <>
-      <circle cx={cx} cy={cy} r={radius} stroke={grid} strokeWidth={1} fill="none" />
-      {elems}
-    </>
+    return out
+  }, [smoothSamples, gain])
+  // 维护历史（右侧为最新）
+  React.useEffect(() => {
+    if (!frameBands.length) return
+    setHist(prev => {
+      const next = [...prev, frameBands]
+      if (next.length > historyLen) next.shift()
+      return next
+    })
+  }, [frameBands])
+  function heatColor(v: number) {
+    // 0 -> #3a0b17, 0.6 -> #eb1a50, 1.0 -> #ffb3c5
+    const clamp = (x: number) => Math.max(0, Math.min(1, x))
+    const t = clamp(v)
+    const mid = 0.6
+    const lerp = (a: number, b: number, t: number) => Math.round(a + (b - a) * t)
+    if (t <= mid) {
+      const u = t / mid
+      const r = lerp(58, 235, u) // 3a -> eb
+      const g = lerp(11, 26, u)  // 0b -> 1a
+      const b = lerp(23, 80, u)  // 17 -> 50
+      return `rgb(${r},${g},${b})`
+    } else {
+      const u = (t - mid) / (1 - mid)
+      const r = lerp(235, 255, u)
+      const g = lerp(26, 179, u)
+      const b = lerp(80, 197, u)
+      return `rgb(${r},${g},${b})`
+    }
   }
+  function renderWaterfall() {
+    const cols = hist.length
+    const startX = wfOffsetX + (wfW - gap - cols * (cellW + gap))
+    const elems: JSX.Element[] = []
+    for (let x = 0; x < cols; x++) {
+      const bandsVals = hist[x]
+      for (let b = 0; b < bands; b++) {
+        const v = bandsVals ? bandsVals[b] || 0 : 0
+        const cx = startX + gap + x * (cellW + gap)
+        const cy = wfOffsetY + gap + (bands - 1 - b) * (cellW + gap)
+        elems.push(<rect key={`${x}-${b}`} x={cx} y={cy} width={cellW} height={cellW} fill={heatColor(v)} opacity={0.95} />)
+      }
+    }
+    return <>{elems}</>
+  }
+  // radial 视觉已移除
 
   const barLen = Math.round(rmsSmoothed * (w - 60))
 
   return (
     <div style={{width:w, display:'flex', flexDirection:'column', gap:6}}>
       <svg width={w} height={h} style={{background:bg, border:'1px solid #1d2a3a', borderRadius:6, cursor:'pointer'}} onClick={onToggle}>
-        {mode === 'wave' ? renderWave() : mode === 'bars' ? renderBars() : renderRadial()}
+        {mode === 'wave' ? renderWave() : mode === 'bars' ? renderBars() : renderWaterfall()}
       </svg>
       <div style={{display:'flex', alignItems:'center', gap:8}}>
-        <div style={{width:w-60, height:8, background:'#12202f', borderRadius:4, overflow:'hidden'}}>
+        <div style={{width:w-60, height:8, background:'#3a0b17', borderRadius:4, overflow:'hidden'}}>
           <div style={{width:barLen, height:'100%', background:accent, transition:'width 120ms'}} />
         </div>
         <span style={{fontSize:12, color:'#6b829e'}} title="RMS（均方根）是音频能量/响度的近似，越大代表越响">RMS {Math.round(rmsSmoothed*100)}%</span>
