@@ -1,6 +1,9 @@
 use std::collections::VecDeque;
 use serde::Serialize;
 
+// 诊断日志开关：临时开启，便于定位 NONE 的原因（完成后可改为 false）
+const VERBOSE_BPM_DEBUG: bool = true;
+
 #[derive(Serialize, Clone, Copy)]
 pub struct BpmEstimate { pub bpm: f32, pub confidence: f32, pub rms: f32, pub from_short: bool, pub win_sec: f32 }
 
@@ -117,17 +120,20 @@ impl BpmEstimator {
         // 计算器：对任意切片做自相关打分并返回 (bpm, confidence, best_score, avg_score)
         // 附加：仅在存在足够清晰的“鼓点峰”时才输出（低鼓点段落直接判定为 None）
         let eval_slice = |xs: &[f32]| -> Option<(f32, f32, f32, f32, f32)> {
-            if xs.len() <= max_lag + 1 { return None; }
+            if xs.len() <= max_lag + 1 {
+                if VERBOSE_BPM_DEBUG { eprintln!("[FILT] too_short xs_len={} need>{}", xs.len(), max_lag + 1); }
+                return None;
+            }
             // 首尾静音裁剪：阈值=3%峰值
             let max_v = xs.iter().cloned().fold(0.0f32, |m, v| if v.abs() > m { v.abs() } else { m });
-            if max_v <= 1e-7 { return None; }
+            if max_v <= 1e-7 { if VERBOSE_BPM_DEBUG { eprintln!("[FILT] max_v too small max_v={:.3e}", max_v); } return None; }
             let thr = (0.03 * max_v).max(1e-7);
             let mut i0 = 0usize; while i0 < xs.len() && xs[i0].abs() < thr { i0 += 1; }
             let mut i1 = xs.len().saturating_sub(1); while i1 > i0 && xs[i1].abs() < thr { i1 -= 1; }
-            if i1 <= i0 { return None; }
+            if i1 <= i0 { if VERBOSE_BPM_DEBUG { eprintln!("[FILT] trim collapse i0={} i1={}", i0, i1); } return None; }
             let slice = &xs[i0..=i1];
             let min_keep = (self.ds_rate as usize) * 16 / 10; // 至少 1.6 秒
-            if slice.len() < min_keep { return None; }
+            if slice.len() < min_keep { if VERBOSE_BPM_DEBUG { eprintln!("[FILT] slice too short len={} need>={}", slice.len(), min_keep); } return None; }
 
             let mean = slice.iter().copied().sum::<f32>() / slice.len() as f32;
             let mut x: Vec<f32> = slice.iter().map(|v| v - mean).collect();
@@ -141,11 +147,11 @@ impl BpmEstimator {
 
             // 鼓点峰提取：放宽基础阈值、动态阈值与显著性
             let max_x = x.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-            let peak_thr = (0.18 * max_x).max(1e-7);
+            let peak_thr = (0.14 * max_x).max(1e-7);
             let mut abs_sorted: Vec<f32> = x.iter().map(|v| v.abs()).collect();
             abs_sorted.sort_by(|a,b| a.partial_cmp(b).unwrap());
-            let p40 = abs_sorted[abs_sorted.len() * 40 / 100].max(1e-7);
-            let dyn_thr = peak_thr.max(p40);
+            let p35 = abs_sorted[abs_sorted.len() * 35 / 100].max(1e-7);
+            let dyn_thr = peak_thr.max(p35);
             let min_sep = ((self.ds_rate * 60.0 / self.max_bpm).round() as usize).max(2);
             let mut peaks: Vec<usize> = Vec::new();
             for i in 1..(x.len().saturating_sub(1)) {
@@ -157,11 +163,11 @@ impl BpmEstimator {
                     let left_min = x[l0..i].iter().fold(x[i], |m, &v| m.min(v));
                     let right_min = x[i+1..=r0].iter().fold(x[i], |m, &v| m.min(v));
                     let prom = x[i] - left_min.max(right_min);
-                    let prom_thr = (0.06 * max_x).max(dyn_thr * 0.20);
+                    let prom_thr = (0.04 * max_x).max(dyn_thr * 0.15);
                     if prom >= prom_thr { peaks.push(i); }
                 }
             }
-            if peaks.len() < 2 { return None; }
+            if peaks.len() < 2 { if VERBOSE_BPM_DEBUG { eprintln!("[FILT] peaks<2 dyn_thr={:.4} peak_thr={:.4} max_x={:.4}", dyn_thr, peak_thr, max_x); } return None; }
 
             // 计算鼓点间隔的变异系数
             let mut cv = 0.0f32;
@@ -172,7 +178,7 @@ impl BpmEstimator {
                     let var = iois.iter().map(|v| (v-mean)*(v-mean)).sum::<f32>() / iois.len() as f32;
                     let std = var.sqrt(); cv = (std / mean).min(2.0);
                 }
-                if cv > 0.6 { return None; }
+                if cv > 0.65 { if VERBOSE_BPM_DEBUG { eprintln!("[FILT] cv high cv={:.3} thr=0.65", cv); } return None; }
             }
 
             let win_sec_here = slice.len() as f32 / self.ds_rate;
@@ -182,15 +188,15 @@ impl BpmEstimator {
             let p50_all = abs_sorted_all[abs_sorted_all.len()/2].max(1e-7);
             let p95_all = abs_sorted_all[abs_sorted_all.len()*95/100].max(1e-7);
             let peakiness = (p95_all / p50_all).max(0.0);
-            if peakiness < 1.3 { return None; }
+            if peakiness < 1.25 { if VERBOSE_BPM_DEBUG { eprintln!("[FILT] peakiness low p95/p50={:.3}", peakiness); } return None; }
 
             // 峰密度范围
             let peaks_per_sec = peaks.len() as f32 / win_sec_here.max(1e-3);
-            if peaks_per_sec < 0.25 || peaks_per_sec > 12.0 { return None; }
+            if peaks_per_sec < 0.20 || peaks_per_sec > 14.0 { if VERBOSE_BPM_DEBUG { eprintln!("[FILT] density out pps={:.2}", peaks_per_sec); } return None; }
 
             // 峰数量：窗口越长要求越高（4s 目标至少 4 个峰）
-            let min_peaks = if win_sec_here >= 3.5 { 4 } else if win_sec_here >= 2.0 { 3 } else { 2 };
-            if peaks.len() < min_peaks { return None; }
+            let min_peaks = if win_sec_here >= 3.5 { 4 } else if win_sec_here >= 2.0 { 2 } else { 2 };
+            if peaks.len() < min_peaks { if VERBOSE_BPM_DEBUG { eprintln!("[FILT] not enough peaks cnt={} need>={} win={:.2}s", peaks.len(), min_peaks, win_sec_here); } return None; }
 
             // 基于鼓点裁剪：保留第一个至最后一个峰的区间，左右各留 0.75*median_ioi 的缓冲
             let (start_i, end_i) = {
@@ -200,16 +206,28 @@ impl BpmEstimator {
                 let s = peaks.first().copied().unwrap_or(0); let e = peaks.last().copied().unwrap_or(x.len().saturating_sub(1));
                 (s.saturating_sub(pad), (e+pad).min(x.len().saturating_sub(1)))
             };
-            let xw: &[f32] = &x[start_i..=end_i];
-            if xw.len() < min_keep { return None; }
+            let xw_crop: &[f32] = &x[start_i..=end_i];
+            // 若峰对齐裁剪后不足长度，回退到未裁剪 slice，避免过裁剪导致直接 None
+            let xw: &[f32] = if xw_crop.len() < min_keep {
+                if slice.len() >= min_keep {
+                    if VERBOSE_BPM_DEBUG { eprintln!("[FALLBACK] use un-cropped slice len={} instead of cropped len={}", slice.len(), xw_crop.len()); }
+                    slice
+                } else {
+                    if VERBOSE_BPM_DEBUG { eprintln!("[FILT] xw too short after peak-crop len={} and raw slice len={} both < {}", xw_crop.len(), slice.len(), min_keep); }
+                    return None;
+                }
+            } else { xw_crop };
 
-            // 自相关
+            // 自相关（峰对齐窗口 xw 上）
             let mut best_lag = 0usize;
             let mut best_score = f32::MIN;
             let mut second_score = f32::MIN;
             let mut scores_sum = 0.0f32;
             let mut scores_cnt = 0usize;
 
+            // 栅格先验参数：优先整数/0.5 栅格，温和加权
+            let grid_sigma = 0.32f32; // BPM 栅格标准差
+            let grid_gamma = 0.30f32; // 栅格权重系数（温和）
             for lag in min_lag..=max_lag {
                 let mut num = 0.0f32;
                 let mut e1 = 0.0f32;
@@ -225,31 +243,57 @@ impl BpmEstimator {
                 let denom = (e1 * e2).sqrt().max(1e-9);
                 let r = (num / denom).clamp(0.0, 1.0);
                 let bpm_here = 60.0 * self.ds_rate / lag as f32;
+                // 全局先验（中心 120，σ=50）
                 let prior = (-((bpm_here - 120.0).powi(2)) / (2.0 * 50.0f32.powi(2))).exp();
-                let score = r * (0.6 + 0.4 * prior);
+                // 栅格先验（仅整数优先，去掉半整数以避免 130.5 倾向）
+                let nearest_int = bpm_here.round();
+                let delta = (bpm_here - nearest_int).abs();
+                let grid_w = (-(delta * delta) / (2.0 * grid_sigma * grid_sigma)).exp();
+                let grid_mix = (1.0 - grid_gamma) + grid_gamma * grid_w;
+                let score = r * (0.6 + 0.4 * prior) * grid_mix;
 
                 scores_sum += score;
                 scores_cnt += 1;
                 if score > best_score { second_score = best_score; best_score = score; best_lag = lag; }
                 else if score > second_score { second_score = score; }
             }
-            if best_lag == 0 { return None; }
+            if best_lag == 0 { if VERBOSE_BPM_DEBUG { eprintln!("[FILT] no best lag"); } return None; }
+
+            // 多谐波一致性：对 best_lag 对应的 bpm 以及 0.5x/2x 做一致性检查
+            let _bpm_primary = 60.0 * self.ds_rate / best_lag as f32;
+            let lag_half = ((best_lag as f32) * 2.0).round() as usize; // 0.5x bpm → 2×lag
+            let lag_dbl  = ((best_lag as f32) * 0.5).round() as usize; // 2x bpm → 0.5×lag
+            let eval_r_at = |lag: usize| -> f32 {
+                if lag <= min_lag || lag >= max_lag || xw.len() <= lag { return 0.0; }
+                let mut num = 0.0f32; let mut e1 = 0.0f32; let mut e2 = 0.0f32;
+                for i in 0..(xw.len() - lag) { let a = xw[i]; let b = xw[i + lag]; num += a * b; e1 += a * a; e2 += b * b; }
+                let denom = (e1 * e2).sqrt().max(1e-9); (num / denom).clamp(0.0, 1.0)
+            };
+            let r_primary = eval_r_at(best_lag);
+            let r_half = eval_r_at(lag_half);
+            let r_dbl  = eval_r_at(lag_dbl);
+            // 族一致性差：仅影响后续 confidence，不改变排序分数，避免 margin 被连带压小
+            let family_min = r_half.min(r_dbl);
+            let harm_penalty = if family_min < r_primary * 0.35 {
+                if VERBOSE_BPM_DEBUG { eprintln!("[HARM] penalize r_pri={:.3} r_half={:.3} r_dbl={:.3}", r_primary, r_half, r_dbl); }
+                0.90
+            } else { 1.0 };
 
             // 守卫
-            if best_lag <= min_lag + 1 && best_score < 0.33 { return None; }
-            if best_score < 0.12 { return None; }
+            if best_lag <= min_lag + 1 && best_score < 0.20 { if VERBOSE_BPM_DEBUG { eprintln!("[FILT] edge lag score too low lag={} score={:.3}", best_lag, best_score); } return None; }
+            if best_score < 0.08 { if VERBOSE_BPM_DEBUG { eprintln!("[FILT] best_score too low {:.3}", best_score); } return None; }
 
             let avg_score = (scores_sum / scores_cnt as f32).max(1e-9);
             let ratio = (best_score / avg_score).max(1.0);
             // 主峰与次峰区分度
             let margin = (best_score - second_score).max(0.0);
-            if margin < 0.015 { return None; }
-            let mut confidence = (best_score * ratio.sqrt()).clamp(0.0, 0.95).powf(0.85);
+            if margin < 0.010 { if VERBOSE_BPM_DEBUG { eprintln!("[FILT] margin too small {:.4}", margin); } return None; }
+            let mut confidence = (best_score * ratio.sqrt()).clamp(0.0, 0.95).powf(0.85) * harm_penalty;
             // 置信度调制
             let cnt_factor = ((peaks.len() as f32) / 8.0).clamp(0.3, 1.0);
             let stab_factor = (1.0 - cv).clamp(0.4, 1.0);
             confidence *= 0.5 + 0.5 * cnt_factor * stab_factor;
-            if confidence < 0.06 { return None; }
+            if confidence < 0.05 { if VERBOSE_BPM_DEBUG { eprintln!("[FILT] confidence too low {:.3}", confidence); } return None; }
 
             // 抛物线插值细化
             let mut bpm = 60.0 * self.ds_rate / best_lag as f32;
@@ -270,7 +314,25 @@ impl BpmEstimator {
                     bpm = 60.0 * self.ds_rate / (best_lag as f32 + d);
                 }
             }
+
+            // IOI 中值二次确认：用鼓点间隔的中值得到 ioi_bpm，与自相关 bpm 接近则做温和加权
+            if peaks.len() >= 3 {
+                let mut iois_samp: Vec<usize> = peaks.windows(2).map(|w| w[1] - w[0]).collect();
+                iois_samp.sort_unstable();
+                let med_ioi = iois_samp[iois_samp.len()/2].max(1);
+                let ioi_bpm = 60.0 * self.ds_rate / med_ioi as f32;
+                let rel = (ioi_bpm - bpm).abs() / bpm.max(1e-6);
+                if rel <= 0.008 { // 0.8% 以内则融合，降低0.5/1/2量化漂移
+                    bpm = (bpm * 2.0 + ioi_bpm) / 3.0;
+                }
+            }
             let win_sec = xw.len() as f32 / self.ds_rate;
+            if VERBOSE_BPM_DEBUG {
+                eprintln!(
+                    "[ANA-DBG] bpm={:.2} conf={:.3} win={:.2}s peaks={} pps={:.2} cv={:.3} margin={:.4} best={:.3} avg={:.3}",
+                    bpm, confidence, win_sec, peaks.len(), peaks_per_sec, cv, margin, best_score, avg_score
+                );
+            }
             Some((bpm, confidence, best_score, avg_score, win_sec))
         };
 

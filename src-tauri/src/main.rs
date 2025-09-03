@@ -66,6 +66,9 @@ struct FrontendBundle {
 static CURRENT_BPM: OnceLock<Mutex<Option<DisplayBpm>>> = OnceLock::new();
 static COLLECTED_DEBUG: OnceLock<Mutex<Vec<serde_json::Value>>> = OnceLock::new();
 static COLLECTED_LOGS: OnceLock<Mutex<Vec<BackendLog>>> = OnceLock::new();
+// 运行时开关：减少事件与日志以避免 UI 卡顿
+const EMIT_DEBUG_EVENTS: bool = false;
+const EMIT_TEXT_LOGS: bool = true;
 
 #[tauri::command]
 fn start_capture(app: AppHandle) -> Result<(), String> {
@@ -168,17 +171,27 @@ fn run_capture(app: AppHandle) -> Result<()> {
     // 显示平滑缓存（稳定优先：时间窗口中值 + EMA）
     let mut disp_hist: VecDeque<f32> = VecDeque::with_capacity(7);
     let mut ema_disp: Option<f32> = None;
-    // 稳定聚合窗口（毫秒）：优先稳定，牺牲一定延迟
-    let stable_win_ms: u64 = 600;
+    // 稳定聚合窗口（毫秒）：扩大到 1.5s 以用于软门稳定性判据（MAD）
+    let stable_win_ms: u64 = 1500;
     let mut stable_vals: VecDeque<(f32, u64)> = VecDeque::with_capacity(256);
 
+    // 可视化事件节流：至少间隔 33ms 发送一次（~30fps）
+    let mut last_viz_ms: u64 = 0;
+    // 切歌快速重锁相关：截止时间与触发器统计
+    let mut fast_relock_deadline: Option<u64> = None;
+    let mut prev_rms_db: Option<f32> = None;
+    let mut recent_none_flag: bool = false;
+    let mut dev_from_lock_cnt: u8 = 0;
+    // 记录最近一次“非灰显（高亮）”显示的整数与状态，用于软门同整数时维持高亮
+    let mut last_hard_int: Option<i32> = None;
+    let mut last_hard_state: Option<&'static str> = None;
     loop {
         // 仅 Simple；阻塞接收，直至累积 ≥ 窗口大小（带超时）
         while window.len() < target_len {
             match rx.recv_timeout(Duration::from_millis(20)) {
                 Ok(mut buf) => {
                     // 先基于当前包生成可视化，再将其推入窗口，避免 drain 后访问空缓冲
-                    let out_len = 256usize;
+                    let out_len = 192usize; // 降低单帧数据量以提升帧率
                     if !buf.is_empty() {
                         let len = buf.len();
                         let mut rms_acc = 0.0f32;
@@ -199,9 +212,17 @@ fn run_capture(app: AppHandle) -> Result<()> {
                             out.push(if cnt > 0 { (acc / cnt as f32).clamp(-1.0, 1.0) } else { 0.0 });
                             idx_f += step;
                         }
-                        let _ = app.emit_to("main", "viz_update", AudioViz { samples: out, rms });
+                        let nowv = now_ms();
+                        if nowv.saturating_sub(last_viz_ms) >= 33 {
+                            let _ = app.emit_to("main", "viz_update", AudioViz { samples: out, rms });
+                            last_viz_ms = nowv;
+                        }
                     } else {
-                        let _ = app.emit_to("main", "viz_update", AudioViz { samples: vec![0.0; out_len], rms: 0.0 });
+                        let nowv = now_ms();
+                        if nowv.saturating_sub(last_viz_ms) >= 33 {
+                            let _ = app.emit_to("main", "viz_update", AudioViz { samples: vec![0.0; out_len], rms: 0.0 });
+                            last_viz_ms = nowv;
+                        }
                     }
 
                     // 再推入分析窗口
@@ -230,6 +251,11 @@ fn run_capture(app: AppHandle) -> Result<()> {
         for i in 0..target_len { if let Some(&v) = window.get(i) { frames.push(v); } }
 
         let level = level_from_frames(&frames);
+        // 计算当前帧能量 dB（用于能量跳变检测）
+        let mut sumsq = 0.0f32;
+        for &s in &frames { sumsq += s * s; }
+        let rms = (sumsq / frames.len() as f32).sqrt();
+        let cur_db = 20.0 * (rms.max(1e-9)).log10();
         let is_silent = level < 0.03; // 略提高阈值，加速静音判定
 
         if is_silent {
@@ -268,7 +294,7 @@ fn run_capture(app: AppHandle) -> Result<()> {
             };
             let _ = app.emit_to("main", "bpm_debug", dbg);
             if let Some(cell) = COLLECTED_DEBUG.get() { if let Ok(mut g) = cell.lock() { let _ = g.push(serde_json::to_value(&dbg).unwrap_or(serde_json::Value::Null)); } }
-            disp_hist.clear(); ema_disp = None;
+            disp_hist.clear(); ema_disp = None; prev_rms_db = None;
             // 滑动步进
             for _ in 0..hop_len { let _ = window.pop_front(); }
             continue;
@@ -277,6 +303,10 @@ fn run_capture(app: AppHandle) -> Result<()> {
 
         if let Some(raw) = backend.process(&frames) {
             none_cnt = 0;
+            // 能量跳变触发切歌快速重锁
+            if let Some(pdb) = prev_rms_db { if (cur_db - pdb).abs() >= 6.0 { fast_relock_deadline = Some(now_ms().saturating_add(2000)); anchor_bpm = None; } }
+            prev_rms_db = Some(cur_db);
+
             let mut conf = raw.confidence.min(0.9);
             conf = conf.powf(0.9);
 
@@ -289,24 +319,29 @@ fn run_capture(app: AppHandle) -> Result<()> {
 
             if !tracking && hi_cnt >= 3 {
                 tracking = true; ever_locked = true;
-                let txt = format!("[STATE] tracking=ON  bpm={:.1} conf={:.2}", raw.bpm, conf);
-                eprintln!("{}", txt);
-                let log = BackendLog { t_ms: now_ms(), msg: txt.clone() };
-                let _ = app.emit_to("main", "bpm_log", log.clone());
-                if let Some(cell) = COLLECTED_LOGS.get() { if let Ok(mut g) = cell.lock() { g.push(log); } }
+                if EMIT_TEXT_LOGS {
+                    let txt = format!("[STATE] tracking=ON  bpm={:.1} conf={:.2}", raw.bpm, conf);
+                    eprintln!("{}", txt);
+                    let log = BackendLog { t_ms: now_ms(), msg: txt.clone() };
+                    let _ = app.emit_to("main", "bpm_log", log.clone());
+                    if let Some(cell) = COLLECTED_LOGS.get() { if let Ok(mut g) = cell.lock() { g.push(log); } }
+                }
             }
             if tracking && lo_cnt >= 2 {
                 tracking = false;
-                let txt = format!("[STATE] tracking=OFF conf={:.2}", conf);
-                eprintln!("{}", txt);
-                let log = BackendLog { t_ms: now_ms(), msg: txt.clone() };
-                let _ = app.emit_to("main", "bpm_log", log.clone());
-                if let Some(cell) = COLLECTED_LOGS.get() { if let Ok(mut g) = cell.lock() { g.push(log); } }
+                if EMIT_TEXT_LOGS {
+                    let txt = format!("[STATE] tracking=OFF conf={:.2}", conf);
+                    eprintln!("{}", txt);
+                    let log = BackendLog { t_ms: now_ms(), msg: txt.clone() };
+                    let _ = app.emit_to("main", "bpm_log", log.clone());
+                    if let Some(cell) = COLLECTED_LOGS.get() { if let Ok(mut g) = cell.lock() { g.push(log); } }
+                }
             }
 
             let state: &str = if tracking { "tracking" } else if ever_locked { "uncertain" } else { "analyzing" };
+            let in_fast = fast_relock_deadline.map_or(false, |t| now_ms() < t);
 
-            // 锚点纠偏候选：{raw, 1/2x, 2x}
+            // 锚点纠偏候选：{raw, 1/2x, 2x, 2/3x, 3/2x}
             let mut disp = raw.bpm;
             let mut corr_kind: &'static str = "raw";
             if let Some(base) = anchor_bpm {
@@ -317,17 +352,86 @@ fn run_capture(app: AppHandle) -> Result<()> {
                 let try_cand = |val: f32, kind: &'static str, best_bpm: &mut f32, best_err: &mut f32, best_kind: &mut &'static str| {
                     if val >= 60.0 && val <= 200.0 {
                         let err = (val - base).abs();
-                        if err < *best_err - 1.0 { *best_err = err; *best_bpm = val; *best_kind = kind; }
+                        // 只要明显更接近锚点就采用（阈值略放宽）
+                        if err + 0.2 < *best_err { *best_err = err; *best_bpm = val; *best_kind = kind; }
                     }
                 };
 
-                // 候选集合
+                // 候选集合（含 2/3 与 3/2，优先靠近锚点）
                 try_cand(disp * 0.5, "half", &mut best_bpm, &mut best_err, &mut best_kind);
                 try_cand(disp * 2.0, "dbl", &mut best_bpm, &mut best_err, &mut best_kind);
+                try_cand(disp * (2.0/3.0), "two_thirds", &mut best_bpm, &mut best_err, &mut best_kind);
+                try_cand(disp * (3.0/2.0), "three_halves", &mut best_bpm, &mut best_err, &mut best_kind);
 
-                if best_bpm != disp { eprintln!("[CORR] {} -> {:.1} (base={:.1}, raw={:.1})", best_kind, best_bpm, base, disp); }
+                if best_bpm != disp && EMIT_TEXT_LOGS { eprintln!("[CORR] {} -> {:.1} (base={:.1}, raw={:.1})", best_kind, best_bpm, base, disp); }
                 disp = best_bpm; corr_kind = best_kind;
             }
+
+            // 显示层整数锁定（带滞后）：不改变内部状态，仅用于显示
+            // 满足：conf≥0.80 且最近多次都落在同一整数±1内
+            {
+                static mut LOCK_INT: Option<i32> = None;
+                static mut LOCK_CNT: u8 = 0;
+                static mut UNLOCK_CNT: u8 = 0;
+                static mut LAST_SHOW_MS: Option<u64> = None; // 最近一次成功显示的时间，用于TTL
+                // 候选整数切换计数（用于避免被错误锁在 128）
+                static mut ALT_INT: Option<i32> = None;
+                static mut ALT_CNT: u8 = 0;
+                // 基于 TTL 的锁清理：10s 没有成功显示则清空锁，避免切歌残留
+                unsafe {
+                    if let Some(last) = LAST_SHOW_MS { if now_ms().saturating_sub(last) > 10_000 { LOCK_INT = None; LOCK_CNT = 0; UNLOCK_CNT = 0; } }
+                }
+                let disp_round = disp.round() as i32;
+                let diff = (disp - disp_round as f32).abs();
+                let within = diff <= 0.6; // 进一步收紧吸附半径，抑制 130.5 和误吸到 131
+                unsafe {
+                    if in_fast { LOCK_INT = None; LOCK_CNT = 0; UNLOCK_CNT = 0; ALT_INT = None; ALT_CNT = 0; }
+                    // 大偏差且高置信度：立即解锁，避免被旧整数粘住（切歌等场景）
+                    if let Some(n) = LOCK_INT { if conf >= 0.85 && (disp - n as f32).abs() >= 2.0 { LOCK_INT = None; LOCK_CNT = 0; UNLOCK_CNT = 0; } }
+                    if conf >= 0.80 && within {
+                        if let Some(n) = LOCK_INT { if n == disp_round { LOCK_CNT = LOCK_CNT.saturating_add(1); } else { LOCK_CNT = 1; LOCK_INT = Some(disp_round); } }
+                        else { LOCK_INT = Some(disp_round); LOCK_CNT = 1; }
+                        // 高置信度时，立即将计数提升至阈值，首帧也能吸附
+                        if conf >= 0.90 && diff <= 0.4 { if LOCK_CNT < 2 { LOCK_CNT = 2; } }
+                        if LOCK_CNT >= 2 { UNLOCK_CNT = 0; disp = disp_round as f32; }
+                    } else if let Some(n) = LOCK_INT {
+                        // 更稳的解锁：高置信度且持续偏离才解锁
+                        if conf >= 0.82 && (disp - n as f32).abs() > 1.3 {
+                            UNLOCK_CNT = UNLOCK_CNT.saturating_add(1);
+                            if UNLOCK_CNT >= 3 { LOCK_INT = None; LOCK_CNT = 0; UNLOCK_CNT = 0; }
+                        } else {
+                            UNLOCK_CNT = 0;
+                        }
+                        // 相邻整数快速切换：连续观察到另一个整数且足够靠近时，直接切换锁
+                        let switch_conf = if in_fast { 0.70 } else { 0.82 };
+                        let switch_need = if in_fast { 2 } else { 3 };
+                        if conf >= switch_conf {
+                            let near_other = (disp - disp_round as f32).abs() <= 0.4 && disp_round != n;
+                            if near_other {
+                                if ALT_INT == Some(disp_round) { ALT_CNT = ALT_CNT.saturating_add(1); } else { ALT_INT = Some(disp_round); ALT_CNT = 1; }
+                                if ALT_CNT as i32 >= switch_need {
+                                    LOCK_INT = Some(disp_round);
+                                    LOCK_CNT = 2; // 视为已稳定
+                                    UNLOCK_CNT = 0;
+                                    disp = disp_round as f32;
+                                }
+                            } else {
+                                ALT_CNT = 0;
+                            }
+                        } else {
+                            ALT_CNT = 0;
+                        }
+                        // 锁偏离统计：偏离 ≥ 8 BPM 计数，用于触发快速重锁
+                        if (disp - n as f32).abs() >= 8.0 { dev_from_lock_cnt = dev_from_lock_cnt.saturating_add(1); } else { dev_from_lock_cnt = 0; }
+                    }
+                }
+                // 若本帧满足显示门槛，则更新 TTL 时间戳（用于下一帧的TTL清理）
+                unsafe { if conf >= 0.80 { LAST_SHOW_MS = Some(now_ms()); } }
+            }
+
+            // 最近 none 恢复触发：下一帧进入快速重锁期（若达到基础置信度）
+            if recent_none_flag && conf >= 0.50 { fast_relock_deadline = Some(now_ms().saturating_add(2000)); anchor_bpm = None; recent_none_flag = false; }
+            if dev_from_lock_cnt >= 2 { fast_relock_deadline = Some(now_ms().saturating_add(2000)); anchor_bpm = None; dev_from_lock_cnt = 0; }
 
             // 稳定聚合：600ms 窗口中值 + 轻微 EMA(0.85/0.15)
             let now_t = now_ms();
@@ -342,10 +446,61 @@ fn run_capture(app: AppHandle) -> Result<()> {
 
             if let Some(cell) = CURRENT_BPM.get() {
                 if let Ok(mut guard) = cell.lock() {
-                    // UI 按“新值即刻显示，未更新保持上次”策略，这里直接发送未经平滑的纠偏值
-                    let payload = DisplayBpm { bpm: disp, confidence: conf, state, level };
-                    *guard = Some(payload);
-                    let _ = app.emit_to("main", "bpm_update", payload);
+                    // 硬门：置信度达到 0.80，且通过离群抑制
+                    let mut allow_hard = conf >= 0.80;
+                    // 如无锚点，使用“当前已持有的上一帧显示值整数”作为临时基准，避免二次加锁造成死锁
+                    let mut base_for_guard: Option<f32> = anchor_bpm;
+                    if base_for_guard.is_none() {
+                        if let Some(prev) = *guard {
+                            if prev.bpm > 0.0 { base_for_guard = Some(prev.bpm.round()); }
+                        }
+                    }
+                    if allow_hard {
+                        if let Some(base) = base_for_guard { if tracking {
+                            let rel = (disp - base).abs() / base.max(1e-6);
+                            if rel > 0.12 {
+                                // 再试图通过谐波回拉
+                                let mut best = disp;
+                                let mut err = rel;
+                                let try_back = |v: f32, best: &mut f32, err: &mut f32| { if v>=60.0 && v<=200.0 { let e = (v-base).abs()/base.max(1e-6); if e < *err { *err = e; *best = v; } } };
+                                try_back(disp*0.5, &mut best, &mut err);
+                                try_back(disp*2.0, &mut best, &mut err);
+                                try_back(disp*(2.0/3.0), &mut best, &mut err);
+                                try_back(disp*(3.0/2.0), &mut best, &mut err);
+                                if err <= 0.08 { disp = best; } else { allow_hard = false; if EMIT_TEXT_LOGS { eprintln!("[OUTLIER] suppress show bpm={:.1} base={:.1} rel={:.3}", disp, base, rel); } }
+                            }
+                        }}
+                        // 简单高端限幅：若候选 > 180 且存在基准，则直接抑制
+                        if allow_hard {
+                            if let Some(base) = base_for_guard { if disp > 180.0 && conf >= 0.80 { allow_hard = false; if EMIT_TEXT_LOGS { eprintln!("[OUTLIER] suppress high bpm={:.1} base={:.1}", disp, base); } } }
+                        }
+                    }
+                    // 软门：置信度较低但稳定（MAD小），在快速期软门阈值更低
+                    let soft_thr = if in_fast { 0.50 } else { 0.55 };
+                    let allow_soft = if !allow_hard && conf >= soft_thr {
+                        let n = win_sorted.len();
+                        if n >= 3 {
+                            let mut devs: Vec<f32> = win_sorted.iter().map(|v| (v - mid).abs()).collect();
+                            devs.sort_by(|a,b| a.partial_cmp(b).unwrap());
+                            let mad = devs[devs.len()/2];
+                            mad <= 0.6 && (disp - mid).abs() <= 1.0 && disp >= 60.0 && disp <= 180.0
+                        } else { false }
+                    } else { false };
+
+                    // 允许显示（硬门或软门）。若软门整数与上次高亮整数一致，则继续高亮显示
+                    if allow_hard || allow_soft {
+                        let mut show_state = if allow_soft { "uncertain" } else { state };
+                        let disp_int = disp.round() as i32;
+                        if allow_soft {
+                            if let Some(prev_int) = last_hard_int { if prev_int == disp_int { show_state = last_hard_state.unwrap_or("tracking"); } }
+                        }
+                        let payload = DisplayBpm { bpm: disp, confidence: conf, state: show_state, level };
+                        *guard = Some(payload);
+                        let _ = app.emit_to("main", "bpm_update", payload);
+                        // TTL 更新时间已在整数锁作用域内完成
+                        // 记录最近一次高亮整数
+                        if !allow_soft { last_hard_int = Some(disp_int); last_hard_state = Some(state); }
+                    }
                 }
             }
             // 高置信度时的锚点门控更新：仅在显示值处于 60–160 且与锚点相对误差≤8% 时更新
@@ -354,18 +509,12 @@ fn run_capture(app: AppHandle) -> Result<()> {
                     let rel = (disp - base).abs() / base.max(1e-6);
                     if rel <= 0.08 && (60.0..=160.0).contains(&disp) {
                         anchor_bpm = Some(base * 0.85 + disp * 0.15);
-                        if let Some(a) = anchor_bpm {
-                            let txt = format!("[ANCHOR] anchor_bpm(update) -> {:.1}", a);
-                            eprintln!("{}", txt);
-                            let _ = app.emit_to("main", "bpm_log", BackendLog { t_ms: now_ms(), msg: txt });
-                        }
+                        if let Some(a) = anchor_bpm { if EMIT_TEXT_LOGS { let txt = format!("[ANCHOR] anchor_bpm(update) -> {:.1}", a); eprintln!("{}", txt); let _ = app.emit_to("main", "bpm_log", BackendLog { t_ms: now_ms(), msg: txt }); } }
                     }
                 } else {
                     if (60.0..=160.0).contains(&disp) {
                         anchor_bpm = Some(disp);
-                        let txt = format!("[ANCHOR] anchor_bpm(init) -> {:.1}", disp);
-                        eprintln!("{}", txt);
-                        let _ = app.emit_to("main", "bpm_log", BackendLog { t_ms: now_ms(), msg: txt });
+                        if EMIT_TEXT_LOGS { let txt = format!("[ANCHOR] anchor_bpm(init) -> {:.1}", disp); eprintln!("{}", txt); let _ = app.emit_to("main", "bpm_log", BackendLog { t_ms: now_ms(), msg: txt }); }
                     }
                 }
             }
@@ -373,42 +522,46 @@ fn run_capture(app: AppHandle) -> Result<()> {
             for _ in 0..hop_len { let _ = window.pop_front(); }
 
             // 分析日志（每2秒一行）：窗口长度、来源、bpm、置信度、当前状态
-            let src = if raw.from_short { "S" } else { "L" };
-            let txt = format!(
-                "[ANA] win={:.1}s src={} bpm={:.1} conf={:.2} state={} lvl={:.2}",
-                raw.win_sec, src, raw.bpm, conf, state, level
-            );
-            eprintln!("{}", txt);
-            let log = BackendLog { t_ms: now_ms(), msg: txt.clone() };
-            let _ = app.emit_to("main", "bpm_log", log.clone());
-            if let Some(cell) = COLLECTED_LOGS.get() { if let Ok(mut g) = cell.lock() { g.push(log); } }
+            // 仅输出前端会显示的 BPM 日志（置信度达到门槛）
+            if conf >= 0.80 && EMIT_TEXT_LOGS {
+                let src = if raw.from_short { "S" } else { "L" };
+                let txt = format!(
+                    "[SHOW] win={:.1}s src={} bpm={:.1} conf={:.2} state={} lvl={:.2}",
+                    raw.win_sec, src, disp, conf, state, level
+                );
+                eprintln!("{}", txt);
+                let log = BackendLog { t_ms: now_ms(), msg: txt.clone() };
+                let _ = app.emit_to("main", "bpm_log", log.clone());
+                if let Some(cell) = COLLECTED_LOGS.get() { if let Ok(mut g) = cell.lock() { g.push(log); } }
+            }
 
-            // 结构化调试事件（前端可视化与导出）
-            let dbg = BpmDebug {
-                t_ms: now_ms(),
-                phase: "estimate",
-                level,
-                state,
-                tracking,
-                ever_locked,
-                hi_cnt,
-                lo_cnt,
-                none_cnt,
-                anchor_bpm,
-                sample_rate: svc.sample_rate(),
-                hop_len,
-                raw_bpm: Some(raw.bpm),
-                raw_confidence: Some(conf),
-                raw_rms: Some(raw.rms),
-                from_short: Some(raw.from_short),
-                win_sec: Some(raw.win_sec),
-                disp_bpm: Some(disp),
-                smoothed_bpm: Some(smoothed),
-                corr: Some(corr_kind),
-            };
-            // 发送并收集
-            let _ = app.emit_to("main", "bpm_debug", dbg);
-            if let Some(cell) = COLLECTED_DEBUG.get() { if let Ok(mut g) = cell.lock() { let _ = g.push(serde_json::to_value(&dbg).unwrap_or(serde_json::Value::Null)); } }
+            // 仅在会显示时收集调试事件，避免冗余
+            if conf >= 0.80 && EMIT_DEBUG_EVENTS {
+                let dbg = BpmDebug {
+                    t_ms: now_ms(),
+                    phase: "estimate",
+                    level,
+                    state,
+                    tracking,
+                    ever_locked,
+                    hi_cnt,
+                    lo_cnt,
+                    none_cnt,
+                    anchor_bpm,
+                    sample_rate: svc.sample_rate(),
+                    hop_len,
+                    raw_bpm: Some(raw.bpm),
+                    raw_confidence: Some(conf),
+                    raw_rms: Some(raw.rms),
+                    from_short: Some(raw.from_short),
+                    win_sec: Some(raw.win_sec),
+                    disp_bpm: Some(disp),
+                    smoothed_bpm: None,
+                    corr: Some(corr_kind),
+                };
+                let _ = app.emit_to("main", "bpm_debug", dbg);
+                if let Some(cell) = COLLECTED_DEBUG.get() { if let Ok(mut g) = cell.lock() { let _ = g.push(serde_json::to_value(&dbg).unwrap_or(serde_json::Value::Null)); } }
+            }
         } else {
             none_cnt += 1;
             if none_cnt >= 6 { tracking = false; ever_locked = false; }
@@ -425,13 +578,15 @@ fn run_capture(app: AppHandle) -> Result<()> {
                 }
             }
             // 文本日志：无有效估计
-            let txt = format!("[NONE] win step no estimate, lvl={:.2} tracking={} none_cnt={}", level, tracking, none_cnt);
-            eprintln!("{}", txt);
-            let log = BackendLog { t_ms: now_ms(), msg: txt.clone() };
-            let _ = app.emit_to("main", "bpm_log", log.clone());
-            if let Some(cell) = COLLECTED_LOGS.get() { if let Ok(mut g) = cell.lock() { g.push(log); } }
+            if EMIT_TEXT_LOGS {
+                let txt = format!("[NONE] win step no estimate, lvl={:.2} tracking={} none_cnt={}", level, tracking, none_cnt);
+                eprintln!("{}", txt);
+                let log = BackendLog { t_ms: now_ms(), msg: txt.clone() };
+                let _ = app.emit_to("main", "bpm_log", log.clone());
+                if let Some(cell) = COLLECTED_LOGS.get() { if let Ok(mut g) = cell.lock() { g.push(log); } }
+            }
             // 无估计：发送调试事件
-            let dbg = BpmDebug {
+            if EMIT_DEBUG_EVENTS { let dbg = BpmDebug {
                 t_ms: now_ms(),
                 phase: "none",
                 level,
@@ -454,9 +609,11 @@ fn run_capture(app: AppHandle) -> Result<()> {
                 corr: None,
             };
             let _ = app.emit_to("main", "bpm_debug", dbg);
-            if let Some(cell) = COLLECTED_DEBUG.get() { if let Ok(mut g) = cell.lock() { let _ = g.push(serde_json::to_value(&dbg).unwrap_or(serde_json::Value::Null)); } }
+            if let Some(cell) = COLLECTED_DEBUG.get() { if let Ok(mut g) = cell.lock() { let _ = g.push(serde_json::to_value(&dbg).unwrap_or(serde_json::Value::Null)); } } }
             // 滑动步进
             for _ in 0..hop_len { let _ = window.pop_front(); }
+            // 标记：经历较长 none 段后，下一次成功估计进入快速重锁期
+            if none_cnt >= 6 { recent_none_flag = true; }
         }
     }
 }

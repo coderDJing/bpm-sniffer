@@ -46,43 +46,39 @@ export default function App() {
     let removeListener: (() => void) | null = null
     ;(async () => {
       try {
-        console.log('[BOOT] start_capture...')
         await invoke('start_capture')
-        console.log('[BOOT] globals', { TAURI: (window as any).TAURI ? 'ok' : 'missing', __TAURI__: (window as any).__TAURI__ ? 'ok' : 'missing' })
         const unlistenA = await listen<DisplayBpm>('bpm_update', (e) => {
-          console.log('[EVT] bpm_update', e.payload)
           const res = e.payload
           setConf(res.confidence)
           setState(res.state)
           setLevel(res.level)
-          // 新值即刻显示；若没有新值或为0则保留上一次（不清空）
+          // 后端已做过滤：收到即显示；为0则保留上一次
           if (res.bpm > 0) setBpm(res.bpm)
           setUpdates(prev => {
-            const max = 2000
-            if (prev.length >= max) return [...prev.slice(prev.length - (max - 200)), res]
+            const max = 1000
+            if (prev.length >= max) return [...prev.slice(prev.length - (max - 100)), res]
             return [...prev, res]
           })
         })
         const unlistenB = await listen<BpmDebug>('bpm_debug', (e) => {
           const payload = e.payload as any as BpmDebug
           setDbg((prev) => {
-            const max = 2000
-            if (prev.length >= max) return [...prev.slice(prev.length - (max - 200)), payload]
+            const max = 1000
+            if (prev.length >= max) return [...prev.slice(prev.length - (max - 100)), payload]
             return [...prev, payload]
           })
         })
         const unlistenC = await listen<BackendLog>('bpm_log', (e) => {
           const payload = e.payload as any as BackendLog
           setLogs((prev) => {
-            const max = 4000
-            if (prev.length >= max) return [...prev.slice(prev.length - (max - 400)), payload]
+            const max = 2000
+            if (prev.length >= max) return [...prev.slice(prev.length - (max - 200)), payload]
             return [...prev, payload]
           })
         })
         const unlistenD = await listen<AudioViz>('viz_update', (e) => {
           setViz(e.payload as any as AudioViz)
         })
-        console.log('[BOOT] listeners attached')
         removeListener = () => { unlistenA(); unlistenB(); unlistenC(); unlistenD() }
       } catch (err) { console.error('[BOOT] error', err) }
     })()
@@ -100,7 +96,7 @@ export default function App() {
   async function exportDebug() {
     try {
       const path = await invoke<string>('export_debug_merged', { frontend: { frontend_debug: dbg, frontend_logs: logs, frontend_updates: updates } })
-      console.log('已保存到', path)
+      // 可选提示：保存成功
     } catch (e) { console.error('导出失败', e) }
   }
   function clearDebug() { setDbg([]) }
@@ -118,7 +114,7 @@ export default function App() {
   return (
     <main style={{height:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:16,background:'#0b0f14',color:'#e6f1ff'}}>
       <h1 style={{margin:0,color:'#8aa4c1',fontSize:18}}>BPM</h1>
-      <div style={{fontSize:96,fontWeight:700,letterSpacing:2,opacity:dim}}>{bpm == null ? '—' : bpm.toFixed(1)}</div>
+      <div style={{fontSize:96,fontWeight:700,letterSpacing:2,opacity:dim}}>{bpm == null ? '—' : Math.round(bpm)}</div>
       <div style={{fontSize:14,color:'#6b829e'}}>{label} · 置信度：{confLabel}</div>
       <div style={{width:240,height:8,background:'#1a2633',borderRadius:4,overflow:'hidden'}}>
         <div style={{height:'100%',width:`${Math.round((level||0)*100)}%`,background:'#2ecc71',transition:'width 120ms'}} />
@@ -154,22 +150,28 @@ function VizPanel({ viz, mode, onToggle }: { viz: AudioViz | null, mode: 'wave'|
   const accent = '#2ecc71'
   const rmsRaw = viz?.rms ?? 0
   const samples = viz?.samples ?? []
+  const silentCut = 0.015
+  const isSilent = rmsRaw < silentCut
 
   // 帧间平滑：对样本进行逐点 EMA，减少闪烁（不改变数据频率）
   const [lastSmoothed, setLastSmoothed] = React.useState<number[] | null>(null)
   const smoothSamples = React.useMemo(() => {
     const alpha = 0.35 // 越小越平滑
-    if (!samples.length) return [] as number[]
-    if (!lastSmoothed || lastSmoothed.length !== samples.length) {
-      return samples
+    const base = isSilent ? new Array(samples.length).fill(0) : samples
+    if (!base.length) return [] as number[]
+    if (!lastSmoothed || lastSmoothed.length !== base.length) {
+      return base
     }
-    const out = new Array(samples.length)
-    for (let i = 0; i < samples.length; i++) {
-      out[i] = lastSmoothed[i] * (1 - alpha) + samples[i] * alpha
+    const out = new Array(base.length)
+    for (let i = 0; i < base.length; i++) {
+      out[i] = lastSmoothed[i] * (1 - alpha) + base[i] * alpha
     }
     return out
-  }, [samples, lastSmoothed])
-  React.useEffect(() => { if (smoothSamples.length) setLastSmoothed(smoothSamples) }, [smoothSamples])
+  }, [samples, isSilent, lastSmoothed])
+  React.useEffect(() => {
+    if (isSilent) { setLastSmoothed(null); return }
+    if (smoothSamples.length) setLastSmoothed(smoothSamples)
+  }, [smoothSamples, isSilent])
 
   // RMS 平滑，避免进度条抖动
   const [rmsSmoothed, setRmsSmoothed] = React.useState(0)
@@ -185,8 +187,8 @@ function VizPanel({ viz, mode, onToggle }: { viz: AudioViz | null, mode: 'wave'|
       if (a > localPeak) localPeak = a
     }
     // 放慢响应，避免瞬时放大过头
-    setPeak(p => p * 0.95 + localPeak * 0.05)
-  }, [smoothSamples])
+    setPeak(p => isSilent ? 0.2 : (p * 0.95 + localPeak * 0.05))
+  }, [smoothSamples, isSilent])
   // 降低基础增益，并限制上下限，取折中视觉效果
   const base = Math.max(0.12, Math.min(0.6, peak))
   let gain = 0.6 / base
