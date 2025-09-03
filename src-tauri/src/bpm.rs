@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use serde::Serialize;
 
 // 诊断日志开关：临时开启，便于定位 NONE 的原因（完成后可改为 false）
-const VERBOSE_BPM_DEBUG: bool = true;
+const VERBOSE_BPM_DEBUG: bool = false;
 
 #[derive(Serialize, Clone, Copy)]
 pub struct BpmEstimate { pub bpm: f32, pub confidence: f32, pub rms: f32, pub from_short: bool, pub win_sec: f32 }
@@ -43,8 +43,8 @@ impl BpmEstimator {
             sample_rate,
             ds_rate: 200.0,
             buf: VecDeque::with_capacity(8 * 200),
-            min_bpm: 60.0,
-            max_bpm: 200.0,
+            min_bpm: 91.0,
+            max_bpm: 180.0,
             hp_alpha,
             lp_alpha,
             hp_lp_prev: 0.0,

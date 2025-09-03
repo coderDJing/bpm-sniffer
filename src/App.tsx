@@ -93,12 +93,6 @@ export default function App() {
   // 已固定后端为基础模式，无切换
 
   const lastDbg = useMemo(() => dbg.length ? dbg[dbg.length - 1] : null, [dbg])
-  async function exportDebug() {
-    try {
-      const path = await invoke<string>('export_debug_merged', { frontend: { frontend_debug: dbg, frontend_logs: logs, frontend_updates: updates } })
-      // 可选提示：保存成功
-    } catch (e) { console.error('导出失败', e) }
-  }
   function clearDebug() { setDbg([]) }
 
   async function toggleAlwaysOnTop() {
@@ -127,7 +121,6 @@ export default function App() {
         <button onClick={toggleAlwaysOnTop} style={{background: alwaysOnTop ? '#2f4f1f' : '#12202f',color:'#8aa4c1',border:'1px solid #243447',borderRadius:6,padding:'6px 10px',cursor:'pointer'}}>
           {alwaysOnTop ? '已置顶' : '置顶'}
         </button>
-        <button onClick={exportDebug} style={{background:'#12202f',color:'#8aa4c1',border:'1px solid #243447',borderRadius:6,padding:'6px 10px',cursor:'pointer'}}>导出JSON</button>
       </div>
 
       {/* 调试面板已移除，仅保留导出功能 */}

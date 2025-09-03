@@ -8,7 +8,7 @@ use std::{thread, time::Duration, sync::{Mutex, OnceLock}};
 use std::collections::VecDeque;
 
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
+use serde::Serialize;
 use tauri::{AppHandle, Manager, Emitter};
 use tauri_plugin_single_instance::init as single_instance;
 
@@ -21,32 +21,7 @@ struct DisplayBpm { bpm: f32, confidence: f32, state: &'static str, level: f32 }
 #[derive(Serialize, Clone)]
 struct BackendLog { t_ms: u64, msg: String }
 
-#[derive(Serialize, Clone, Copy)]
-struct BpmDebug {
-    // 调试事件：时间戳（ms）与阶段
-    t_ms: u64,
-    phase: &'static str, // estimate | silent | none
-    // 能量与基本上下文
-    level: f32,
-    state: &'static str,
-    tracking: bool,
-    ever_locked: bool,
-    hi_cnt: usize,
-    lo_cnt: usize,
-    none_cnt: usize,
-    anchor_bpm: Option<f32>,
-    sample_rate: u32,
-    hop_len: usize,
-    // 估计相关（仅在 estimate 时有值）
-    raw_bpm: Option<f32>,
-    raw_confidence: Option<f32>,
-    raw_rms: Option<f32>,
-    from_short: Option<bool>,
-    win_sec: Option<f32>,
-    disp_bpm: Option<f32>,
-    smoothed_bpm: Option<f32>,
-    corr: Option<&'static str>, // raw | half | dbl
-}
+// （已移除 BpmDebug 结构与相关事件收集）
 
 #[derive(Serialize, Clone)]
 struct AudioViz {
@@ -56,24 +31,15 @@ struct AudioViz {
     rms: f32,
 }
 
-#[derive(Deserialize)]
-struct FrontendBundle {
-    frontend_debug: Vec<serde_json::Value>,
-    frontend_logs: Vec<serde_json::Value>,
-    frontend_updates: Vec<serde_json::Value>,
-}
+// 已移除用于导出合并日志的 FrontendBundle 结构
 
 static CURRENT_BPM: OnceLock<Mutex<Option<DisplayBpm>>> = OnceLock::new();
-static COLLECTED_DEBUG: OnceLock<Mutex<Vec<serde_json::Value>>> = OnceLock::new();
 static COLLECTED_LOGS: OnceLock<Mutex<Vec<BackendLog>>> = OnceLock::new();
-// 运行时开关：减少事件与日志以避免 UI 卡顿
-const EMIT_DEBUG_EVENTS: bool = false;
 const EMIT_TEXT_LOGS: bool = true;
 
 #[tauri::command]
 fn start_capture(app: AppHandle) -> Result<(), String> {
     let _ = CURRENT_BPM.set(Mutex::new(None));
-    let _ = COLLECTED_DEBUG.set(Mutex::new(Vec::new()));
     let _ = COLLECTED_LOGS.set(Mutex::new(Vec::new()));
     thread::spawn(move || {
         if let Err(_e) = run_capture(app) { }
@@ -85,38 +51,7 @@ fn start_capture(app: AppHandle) -> Result<(), String> {
 fn get_current_bpm() -> Option<DisplayBpm> {
     CURRENT_BPM.get().and_then(|m| m.lock().ok().and_then(|g| *g))
 }
-#[tauri::command]
-fn export_debug() -> Result<String, String> {
-    let dbg = if let Some(m) = COLLECTED_DEBUG.get() { if let Ok(g) = m.lock() { g.clone() } else { Vec::new() } } else { Vec::new() };
-    let logs = if let Some(m) = COLLECTED_LOGS.get() { if let Ok(g) = m.lock() { g.clone() } else { Vec::new() } } else { Vec::new() };
-    let payload = serde_json::json!({
-        "meta": { "ts": now_ms(), "app": "bpm-sniffer" },
-        "backend_debug": dbg,
-        "backend_logs": logs,
-    });
-    serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn export_debug_merged(frontend: FrontendBundle) -> Result<String, String> {
-    let dbg = if let Some(m) = COLLECTED_DEBUG.get() { if let Ok(g) = m.lock() { g.clone() } else { Vec::new() } } else { Vec::new() };
-    let logs = if let Some(m) = COLLECTED_LOGS.get() { if let Ok(g) = m.lock() { g.clone() } else { Vec::new() } } else { Vec::new() };
-    let payload = serde_json::json!({
-        "meta": { "ts": now_ms(), "app": "bpm-sniffer" },
-        "backend_debug": dbg,
-        "backend_logs": logs,
-        "frontend_debug": frontend.frontend_debug,
-        "frontend_logs": frontend.frontend_logs,
-        "frontend_updates": frontend.frontend_updates,
-    });
-    // 写入桌面目录
-    let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).map_err(|e| e.to_string())?;
-    let desktop = std::path::Path::new(&home).join("Desktop");
-    let fname = format!("bpm-debug-{}.json", now_ms());
-    let path = desktop.join(fname);
-    std::fs::write(&path, serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-    Ok(path.to_string_lossy().to_string())
-}
+// 已移除导出 JSON 相关命令
 
 #[tauri::command]
 fn set_always_on_top(app: AppHandle, on_top: bool) -> Result<(), String> {
@@ -193,9 +128,6 @@ fn run_capture(app: AppHandle) -> Result<()> {
     let mut recent_ints: VecDeque<(i32, u64)> = VecDeque::with_capacity(16);
     // 候选整数（未必已显示）的直方统计，用于检测被卡住时的主导切换
     let mut recent_ints_cand: VecDeque<(i32, u64)> = VecDeque::with_capacity(32);
-    // 最近一次前端已显示的整数与时间戳
-    let mut last_emit_int: Option<i32> = None;
-    let mut last_emit_ms: u64 = 0;
     // 请求在下一次整数锁阶段清空锁
     let mut force_clear_lock: bool = false;
     loop {
@@ -284,31 +216,7 @@ fn run_capture(app: AppHandle) -> Result<()> {
                     let _ = app.emit_to("main", "bpm_update", payload);
                 }
             }
-            // 静音调试事件
-            let dbg = BpmDebug {
-                t_ms: now_ms(),
-                phase: "silent",
-                level,
-                state: "analyzing",
-                tracking,
-                ever_locked,
-                hi_cnt,
-                lo_cnt,
-                none_cnt,
-                anchor_bpm,
-                sample_rate: svc.sample_rate(),
-                hop_len,
-                raw_bpm: None,
-                raw_confidence: None,
-                raw_rms: None,
-                from_short: None,
-                win_sec: None,
-                disp_bpm: None,
-                smoothed_bpm: None,
-                corr: None,
-            };
-            let _ = app.emit_to("main", "bpm_debug", dbg);
-            if let Some(cell) = COLLECTED_DEBUG.get() { if let Ok(mut g) = cell.lock() { let _ = g.push(serde_json::to_value(&dbg).unwrap_or(serde_json::Value::Null)); } }
+            // （已移除 bpm_debug 事件收集）
             disp_hist.clear(); ema_disp = None; prev_rms_db = None;
             // 滑动步进
             for _ in 0..hop_len { let _ = window.pop_front(); }
@@ -362,7 +270,7 @@ fn run_capture(app: AppHandle) -> Result<()> {
 
             // 锚点纠偏候选：{raw, 1/2x, 2x, 2/3x, 3/2x}
             let mut disp = raw.bpm;
-            let mut corr_kind: &'static str = "raw";
+            let mut _corr_kind: &'static str = "raw";
             if let Some(base) = anchor_bpm {
                 let mut best_bpm = disp;
                 let mut best_err = (disp - base).abs();
@@ -383,7 +291,18 @@ fn run_capture(app: AppHandle) -> Result<()> {
                 try_cand(disp * (3.0/2.0), "three_halves", &mut best_bpm, &mut best_err, &mut best_kind);
 
                 if best_bpm != disp && EMIT_TEXT_LOGS { eprintln!("[CORR] {} -> {:.1} (base={:.1}, raw={:.1})", best_kind, best_bpm, base, disp); }
-                disp = best_bpm; corr_kind = best_kind;
+                disp = best_bpm; _corr_kind = best_kind;
+            }
+
+            // EDM 范围标准化：将候选按 2x/0.5x 折算到 [91, 180]
+            if disp < 91.0 || disp > 180.0 {
+                let mut t = disp;
+                for _ in 0..4 {
+                    if t < 91.0 { t *= 2.0; }
+                    else if t > 180.0 { t *= 0.5; }
+                    else { break; }
+                }
+                if t >= 91.0 && t <= 180.0 { disp = t; _corr_kind = "edm_norm"; }
             }
 
             // 显示层整数锁定（带滞后）：不改变内部状态，仅用于显示
@@ -448,7 +367,7 @@ fn run_capture(app: AppHandle) -> Result<()> {
                 unsafe { if conf >= 0.80 { LAST_SHOW_MS = Some(now_ms()); } }
             }
 
-            // 记录候选整数序列，用于无需“切歌检测”的多数派强制切换
+            // 记录候选整数序列（已做EDM标准化后），用于无需“切歌检测”的多数派强制切换
             {
                 let nowh = now_ms();
                 recent_ints_cand.push_back((disp.round() as i32, nowh));
@@ -487,7 +406,7 @@ fn run_capture(app: AppHandle) -> Result<()> {
             if trk_x.is_none() { trk_x = Some(smoothed); trk_v = 0.0; }
             if let Some(mut x) = trk_x {
                 // 预测
-                let mut x_pred = x + trk_v * dt;
+                let x_pred = x + trk_v * dt;
                 // 观测
                 let z = smoothed;
                 // 低置信度时加大预测权重（减小增益）
@@ -528,9 +447,14 @@ fn run_capture(app: AppHandle) -> Result<()> {
                                 if err <= 0.08 { disp = best; } else { allow_hard = false; if EMIT_TEXT_LOGS { eprintln!("[OUTLIER] suppress show bpm={:.1} base={:.1} rel={:.3}", disp, base, rel); } }
                             }
                         }}
-                        // 简单高端限幅：若候选 > 180 且存在基准，则直接抑制
+                        // 范围限幅：若候选超出 91–180 且存在基准，则直接抑制
                         if allow_hard {
-                            if let Some(base) = base_for_guard { if disp > 180.0 && conf >= 0.80 { allow_hard = false; if EMIT_TEXT_LOGS { eprintln!("[OUTLIER] suppress high bpm={:.1} base={:.1}", disp, base); } } }
+                            if let Some(base) = base_for_guard {
+                                if (disp > 180.0 || disp < 91.0) && conf >= 0.80 {
+                                    allow_hard = false;
+                                    if EMIT_TEXT_LOGS { eprintln!("[OUTLIER] suppress out-of-range bpm={:.1} base={:.1}", disp, base); }
+                                }
+                            }
                         }
                     }
                     // 软门：置信度较低但稳定（MAD小），在快速期软门阈值更低
@@ -636,33 +560,7 @@ fn run_capture(app: AppHandle) -> Result<()> {
                 if let Some(cell) = COLLECTED_LOGS.get() { if let Ok(mut g) = cell.lock() { g.push(log); } }
             }
 
-            // 仅在会显示时收集调试事件，避免冗余
-            if conf >= 0.80 && EMIT_DEBUG_EVENTS {
-                let dbg = BpmDebug {
-                    t_ms: now_ms(),
-                    phase: "estimate",
-                    level,
-                    state,
-                    tracking,
-                    ever_locked,
-                    hi_cnt,
-                    lo_cnt,
-                    none_cnt,
-                    anchor_bpm,
-                    sample_rate: svc.sample_rate(),
-                    hop_len,
-                    raw_bpm: Some(raw.bpm),
-                    raw_confidence: Some(conf),
-                    raw_rms: Some(raw.rms),
-                    from_short: Some(raw.from_short),
-                    win_sec: Some(raw.win_sec),
-                    disp_bpm: Some(disp),
-                    smoothed_bpm: None,
-                    corr: Some(corr_kind),
-                };
-                let _ = app.emit_to("main", "bpm_debug", dbg);
-                if let Some(cell) = COLLECTED_DEBUG.get() { if let Ok(mut g) = cell.lock() { let _ = g.push(serde_json::to_value(&dbg).unwrap_or(serde_json::Value::Null)); } }
-            }
+            // （已移除 bpm_debug 事件收集）
         } else {
             none_cnt += 1;
             if none_cnt >= 6 { tracking = false; ever_locked = false; }
@@ -686,31 +584,7 @@ fn run_capture(app: AppHandle) -> Result<()> {
                 let _ = app.emit_to("main", "bpm_log", log.clone());
                 if let Some(cell) = COLLECTED_LOGS.get() { if let Ok(mut g) = cell.lock() { g.push(log); } }
             }
-            // 无估计：发送调试事件
-            if EMIT_DEBUG_EVENTS { let dbg = BpmDebug {
-                t_ms: now_ms(),
-                phase: "none",
-                level,
-                state: if ever_locked { "uncertain" } else { "analyzing" },
-                tracking,
-                ever_locked,
-                hi_cnt,
-                lo_cnt,
-                none_cnt,
-                anchor_bpm,
-                sample_rate: svc.sample_rate(),
-                hop_len,
-                raw_bpm: None,
-                raw_confidence: None,
-                raw_rms: None,
-                from_short: None,
-                win_sec: None,
-                disp_bpm: None,
-                smoothed_bpm: None,
-                corr: None,
-            };
-            let _ = app.emit_to("main", "bpm_debug", dbg);
-            if let Some(cell) = COLLECTED_DEBUG.get() { if let Ok(mut g) = cell.lock() { let _ = g.push(serde_json::to_value(&dbg).unwrap_or(serde_json::Value::Null)); } } }
+            // （已移除 bpm_debug 事件收集）
             // 滑动步进
             for _ in 0..hop_len { let _ = window.pop_front(); }
             // 标记：经历较长 none 段后，下一次成功估计进入快速重锁期
@@ -723,25 +597,11 @@ fn run_capture(app: AppHandle) -> Result<()> {
 fn stop_capture() -> Result<(), String> { Ok(()) }
 
 fn main() {
-    // 开发环境：将 DLL 搜索目录加入进程 PATH，便于加载 src-tauri/bin/windows/x64 下的依赖
-    #[cfg(windows)]
-    {
-        use std::env;
-        use std::path::PathBuf;
-        let mut paths: Vec<PathBuf> = env::split_paths(&env::var_os("PATH").unwrap_or_default()).collect();
-        let dev_bin = PathBuf::from("./src-tauri/bin/windows/x64");
-        if dev_bin.exists() { paths.insert(0, dev_bin); }
-        let resources_bin = PathBuf::from("./bin/windows/x64");
-        if resources_bin.exists() { paths.insert(0, resources_bin); }
-        let merged = env::join_paths(paths).ok();
-        if let Some(p) = merged { env::set_var("PATH", p); }
-    }
-
     tauri::Builder::default()
         .plugin(single_instance(|app, _args, _cwd| {
             if let Some(win) = app.get_webview_window("main") { let _ = win.set_focus(); }
         }))
-        .invoke_handler(tauri::generate_handler![start_capture, stop_capture, get_current_bpm, export_debug, export_debug_merged, set_always_on_top])
+        .invoke_handler(tauri::generate_handler![start_capture, stop_capture, get_current_bpm, set_always_on_top])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
