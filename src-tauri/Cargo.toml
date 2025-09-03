@@ -1,0 +1,38 @@
+[package]
+name = "bpm-sniffer"
+version = "0.1.0"
+edition = "2021"
+
+[build-dependencies]
+# 生成上下文（tauri.conf.json）
+tauri-build = { version = "2", features = [] }
+# 生成占位 ICO 图标（避免缺失导致构建失败）
+ico = "0.4"
+image = { version = "0.24", default-features = false, features = ["png", "ico"] }
+
+[dependencies]
+# Tauri v2 核心
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 并发与错误处理
+crossbeam-channel = "0.5"
+thiserror = "1"
+anyhow = "1"
+# Windows WASAPI / COM
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Threading",
+  "Win32_System_LibraryLoader",
+  "Win32_Media_Audio",
+  "Win32_Media_KernelStreaming"
+] }
+# 单实例插件
+tauri-plugin-single-instance = "2"
+
+# 可选：Aubio 节奏检测（需系统安装 aubio 或使用预编译包）
+[features]
+default = []

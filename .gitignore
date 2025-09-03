@@ -137,3 +137,25 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/gen/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Windows build artifacts (symbol files)
+*.pdb
+*.ilk
+
+# Editor/IDE
+.idea/
+.vscode/**
+!.vscode/extensions.json
+
+# Node lock (keep only one if needed)
+# pnpm-lock.yaml
+# yarn.lock
+# package-lock.json
