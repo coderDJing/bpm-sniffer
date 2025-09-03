@@ -185,6 +185,19 @@ fn run_capture(app: AppHandle) -> Result<()> {
     // 记录最近一次“非灰显（高亮）”显示的整数与状态，用于软门同整数时维持高亮
     let mut last_hard_int: Option<i32> = None;
     let mut last_hard_state: Option<&'static str> = None;
+    // 简易噪声底估计（RMS）与显示层 alpha-beta 预测器
+    let mut noise_floor_rms: f32 = 0.01;
+    let mut trk_x: Option<f32> = None;
+    let mut trk_v: f32 = 0.0;
+    // 近期整数直方统计，用于切歌时的主导整数快速采纳
+    let mut recent_ints: VecDeque<(i32, u64)> = VecDeque::with_capacity(16);
+    // 候选整数（未必已显示）的直方统计，用于检测被卡住时的主导切换
+    let mut recent_ints_cand: VecDeque<(i32, u64)> = VecDeque::with_capacity(32);
+    // 最近一次前端已显示的整数与时间戳
+    let mut last_emit_int: Option<i32> = None;
+    let mut last_emit_ms: u64 = 0;
+    // 请求在下一次整数锁阶段清空锁
+    let mut force_clear_lock: bool = false;
     loop {
         // 仅 Simple；阻塞接收，直至累积 ≥ 窗口大小（带超时）
         while window.len() < target_len {
@@ -256,6 +269,8 @@ fn run_capture(app: AppHandle) -> Result<()> {
         for &s in &frames { sumsq += s * s; }
         let rms = (sumsq / frames.len() as f32).sqrt();
         let cur_db = 20.0 * (rms.max(1e-9)).log10();
+        // 更新噪声底（EMA，偏保守，响应慢一点）
+        noise_floor_rms = noise_floor_rms * 0.99 + rms * 0.01;
         let is_silent = level < 0.03; // 略提高阈值，加速静音判定
 
         if is_silent {
@@ -304,11 +319,15 @@ fn run_capture(app: AppHandle) -> Result<()> {
         if let Some(raw) = backend.process(&frames) {
             none_cnt = 0;
             // 能量跳变触发切歌快速重锁
-            if let Some(pdb) = prev_rms_db { if (cur_db - pdb).abs() >= 6.0 { fast_relock_deadline = Some(now_ms().saturating_add(2000)); anchor_bpm = None; } }
+            if let Some(pdb) = prev_rms_db { if (cur_db - pdb).abs() >= 6.0 { fast_relock_deadline = Some(now_ms().saturating_add(2000)); anchor_bpm = None; stable_vals.clear(); } }
             prev_rms_db = Some(cur_db);
 
             let mut conf = raw.confidence.min(0.9);
             conf = conf.powf(0.9);
+            // 节拍SNR加权：当鼓点相对噪声底更干净时，上调有效置信度
+            let snr = (rms / noise_floor_rms.max(1e-6)).max(0.0);
+            let snr_boost = (snr / 2.5).clamp(0.6, 1.15); // SNR≈2.5 时1.0；弱时0.6，强时上限1.15
+            conf = (conf * snr_boost).clamp(0.0, 0.95);
 
             // 对 aubio 的超短窗（win_sec 很小）采用更宽松的追踪阈值，避免长期停留在 analyzing
             let is_ultra_short = raw.win_sec <= 0.1;
@@ -385,7 +404,7 @@ fn run_capture(app: AppHandle) -> Result<()> {
                 let diff = (disp - disp_round as f32).abs();
                 let within = diff <= 0.6; // 进一步收紧吸附半径，抑制 130.5 和误吸到 131
                 unsafe {
-                    if in_fast { LOCK_INT = None; LOCK_CNT = 0; UNLOCK_CNT = 0; ALT_INT = None; ALT_CNT = 0; }
+                    if in_fast || force_clear_lock { LOCK_INT = None; LOCK_CNT = 0; UNLOCK_CNT = 0; ALT_INT = None; ALT_CNT = 0; force_clear_lock = false; }
                     // 大偏差且高置信度：立即解锁，避免被旧整数粘住（切歌等场景）
                     if let Some(n) = LOCK_INT { if conf >= 0.85 && (disp - n as f32).abs() >= 2.0 { LOCK_INT = None; LOCK_CNT = 0; UNLOCK_CNT = 0; } }
                     if conf >= 0.80 && within {
@@ -429,9 +448,26 @@ fn run_capture(app: AppHandle) -> Result<()> {
                 unsafe { if conf >= 0.80 { LAST_SHOW_MS = Some(now_ms()); } }
             }
 
+            // 记录候选整数序列，用于无需“切歌检测”的多数派强制切换
+            {
+                let nowh = now_ms();
+                recent_ints_cand.push_back((disp.round() as i32, nowh));
+                while let Some(&(_, t0)) = recent_ints_cand.front() { if nowh.saturating_sub(t0) > 1500 { recent_ints_cand.pop_front(); } else { break; } }
+            }
+
             // 最近 none 恢复触发：下一帧进入快速重锁期（若达到基础置信度）
-            if recent_none_flag && conf >= 0.50 { fast_relock_deadline = Some(now_ms().saturating_add(2000)); anchor_bpm = None; recent_none_flag = false; }
-            if dev_from_lock_cnt >= 2 { fast_relock_deadline = Some(now_ms().saturating_add(2000)); anchor_bpm = None; dev_from_lock_cnt = 0; }
+            if recent_none_flag && conf >= 0.50 { fast_relock_deadline = Some(now_ms().saturating_add(2000)); anchor_bpm = None; recent_none_flag = false; stable_vals.clear(); }
+            if dev_from_lock_cnt >= 2 {
+                fast_relock_deadline = Some(now_ms().saturating_add(2000));
+                anchor_bpm = None; dev_from_lock_cnt = 0; stable_vals.clear();
+                // 若近期整数直方统计中出现新主导整数（计数≥3），请求清空锁以便快速吸附
+                let nowh = now_ms();
+                let mut counts: std::collections::HashMap<i32, usize> = std::collections::HashMap::new();
+                for (v, t) in recent_ints.iter().rev() { if nowh.saturating_sub(*t) <= 1500 { *counts.entry(*v).or_insert(0) += 1; } else { break; } }
+                let mut best: Option<(i32, usize)> = None;
+                for (k, c) in counts { if best.map_or(true, |(_, bc)| c > bc) { best = Some((k, c)); } }
+                if let Some((_, c)) = best { if c >= 3 { force_clear_lock = true; } }
+            }
 
             // 稳定聚合：600ms 窗口中值 + 轻微 EMA(0.85/0.15)
             let now_t = now_ms();
@@ -443,6 +479,28 @@ fn run_capture(app: AppHandle) -> Result<()> {
             let mid = win_sorted[win_sorted.len()/2];
             let smoothed = if let Some(prev) = ema_disp { prev * 0.85 + mid * 0.15 } else { mid };
             ema_disp = Some(smoothed);
+
+            // 轻量 alpha-beta 预测器：在低置信度时以预测为主，提升过渡期跟随性
+            let alpha = 0.28f32; // 位置增益
+            let beta  = 0.06f32; // 速度增益
+            let dt    = 0.5f32;  // 以 hop_len≈0.5s 为预测步长
+            if trk_x.is_none() { trk_x = Some(smoothed); trk_v = 0.0; }
+            if let Some(mut x) = trk_x {
+                // 预测
+                let mut x_pred = x + trk_v * dt;
+                // 观测
+                let z = smoothed;
+                // 低置信度时加大预测权重（减小增益）
+                let gain_scale = if conf < 0.70 { 0.6 } else if conf < 0.80 { 0.8 } else { 1.0 };
+                let a = alpha * gain_scale;
+                let b = beta  * gain_scale;
+                let r = z - x_pred;
+                x = x_pred + a * r;
+                trk_v = trk_v + (b * r) / dt;
+                trk_x = Some(x);
+                // 将预测器输出反哺为最终显示平滑的候选（仅在软门或低置信时生效）
+                if conf < 0.80 { ema_disp = Some(x); }
+            }
 
             if let Some(cell) = CURRENT_BPM.get() {
                 if let Ok(mut guard) = cell.lock() {
@@ -478,28 +536,71 @@ fn run_capture(app: AppHandle) -> Result<()> {
                     // 软门：置信度较低但稳定（MAD小），在快速期软门阈值更低
                     let soft_thr = if in_fast { 0.50 } else { 0.55 };
                     let allow_soft = if !allow_hard && conf >= soft_thr {
-                        let n = win_sorted.len();
-                        if n >= 3 {
-                            let mut devs: Vec<f32> = win_sorted.iter().map(|v| (v - mid).abs()).collect();
-                            devs.sort_by(|a,b| a.partial_cmp(b).unwrap());
-                            let mad = devs[devs.len()/2];
-                            mad <= 0.6 && (disp - mid).abs() <= 1.0 && disp >= 60.0 && disp <= 180.0
+                        // 使用“近邻一致性”而非对全局中位数的MAD，以避免旧歌值拖拽
+                        let now_t2 = now_ms();
+                        let recent_span_ms = if in_fast { 1000 } else { 1500 };
+                        let recent: Vec<f32> = stable_vals.iter()
+                            .rev()
+                            .take_while(|(_, t)| now_t2.saturating_sub(*t) <= recent_span_ms)
+                            .map(|(v,_)| *v)
+                            .collect();
+                        let n = recent.len();
+                        if n >= 2 {
+                            let near = recent.into_iter().filter(|v| (*v - disp).abs() <= 0.8).count();
+                            let need = if in_fast { 2 } else { 3 };
+                            near >= need && disp >= 60.0 && disp <= 180.0
                         } else { false }
                     } else { false };
 
-                    // 允许显示（硬门或软门）。若软门整数与上次高亮整数一致，则继续高亮显示
-                    if allow_hard || allow_soft {
+                    // 多数派（候选整数）强制：不依赖切歌检测，只要最近候选多数明确则也允许显示
+                    let allow_major = if !allow_hard && !allow_soft {
+                        let nowh = now_ms();
+                        let mut counts: std::collections::HashMap<i32, usize> = std::collections::HashMap::new();
+                        for (v, t) in recent_ints_cand.iter().rev() { if nowh.saturating_sub(*t) <= 1200 { *counts.entry(*v).or_insert(0) += 1; } else { break; } }
+                        let mut best: Option<(i32, usize)> = None;
+                        for (k, c) in counts { if best.map_or(true, |(_, bc)| c > bc) { best = Some((k, c)); } }
+                        if let Some((k, c)) = best {
+                            let need = if in_fast { 2 } else { 3 };
+                            let prev_int = (*guard).and_then(|g| Some(g.bpm.round() as i32)).unwrap_or(disp.round() as i32);
+                            c >= need && k != prev_int && (60..=180).contains(&k)
+                        } else { false }
+                    } else { false };
+
+                    // 允许显示（硬门或软门或多数派）。若软门整数与上次高亮整数一致，则继续高亮显示
+                    if allow_hard || allow_soft || allow_major {
                         let mut show_state = if allow_soft { "uncertain" } else { state };
                         let disp_int = disp.round() as i32;
                         if allow_soft {
                             if let Some(prev_int) = last_hard_int { if prev_int == disp_int { show_state = last_hard_state.unwrap_or("tracking"); } }
+                            // 快速重锁期内：若与“上一显示值（即使是灰显）”的整数不同，优先允许更新，避免被旧整数粘住
+                            if in_fast {
+                                if let Some(prev) = *guard { if prev.bpm.round() as i32 != disp_int { show_state = "uncertain"; } }
+                            }
                         }
-                        let payload = DisplayBpm { bpm: disp, confidence: conf, state: show_state, level };
-                        *guard = Some(payload);
-                        let _ = app.emit_to("main", "bpm_update", payload);
+                        // 主导整数强制：基于“候选整数”的最近1.5s众数（而不是已显示整数）
+                        // 阈值：快速期≥2；常态≥3（不依赖切歌检测也可切换）
+                        let payload = {
+                            let nowh = now_ms();
+                            let mut counts: std::collections::HashMap<i32, usize> = std::collections::HashMap::new();
+                            for (v, t) in recent_ints_cand.iter().rev() { if nowh.saturating_sub(*t) <= 1500 { *counts.entry(*v).or_insert(0) += 1; } else { break; } }
+                            let mut best: Option<(i32, usize)> = None;
+                            for (k, c) in counts { if best.map_or(true, |(_, bc)| c > bc) { best = Some((k, c)); } }
+                            if let Some((k, c)) = best {
+                                let prev_int = (*guard).and_then(|g| Some(g.bpm.round() as i32)).unwrap_or(disp_int);
+                                let need = if in_fast { 2 } else { 3 };
+                                if (allow_soft || allow_hard || allow_major) && c >= need && k != prev_int { DisplayBpm { bpm: k as f32, confidence: conf, state: "uncertain", level } }
+                                else { DisplayBpm { bpm: disp, confidence: conf, state: show_state, level } }
+                            } else { DisplayBpm { bpm: disp, confidence: conf, state: show_state, level } }
+                        };
+                    *guard = Some(payload);
+                    let _ = app.emit_to("main", "bpm_update", payload);
                         // TTL 更新时间已在整数锁作用域内完成
                         // 记录最近一次高亮整数
                         if !allow_soft { last_hard_int = Some(disp_int); last_hard_state = Some(state); }
+                        // 记录近期整数（用于快速主导整数判定）
+                        let nowh = now_ms();
+                        recent_ints.push_back((payload.bpm.round() as i32, nowh));
+                        while let Some(&(_, t0)) = recent_ints.front() { if nowh.saturating_sub(t0) > 1500 { recent_ints.pop_front(); } else { break; } }
                     }
                 }
             }
@@ -524,7 +625,7 @@ fn run_capture(app: AppHandle) -> Result<()> {
             // 分析日志（每2秒一行）：窗口长度、来源、bpm、置信度、当前状态
             // 仅输出前端会显示的 BPM 日志（置信度达到门槛）
             if conf >= 0.80 && EMIT_TEXT_LOGS {
-                let src = if raw.from_short { "S" } else { "L" };
+            let src = if raw.from_short { "S" } else { "L" };
                 let txt = format!(
                     "[SHOW] win={:.1}s src={} bpm={:.1} conf={:.2} state={} lvl={:.2}",
                     raw.win_sec, src, disp, conf, state, level
