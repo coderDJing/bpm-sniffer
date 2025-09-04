@@ -13,6 +13,7 @@ image = { version = "0.24", default-features = false, features = ["png", "ico"] 
 [dependencies]
 # Tauri v2 核心
 tauri = { version = "2", features = [] }
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # 并发与错误处理
@@ -33,6 +34,5 @@ windows = { version = "0.61", features = [
 # 单实例插件
 tauri-plugin-single-instance = "2"
 
-# 可选：Aubio 节奏检测（需系统安装 aubio 或使用预编译包）
 [features]
 default = []

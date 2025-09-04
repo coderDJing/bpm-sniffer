@@ -4,9 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.renlu.bpm-sniffer",
   "build": {
-    "beforeBuildCommand": "",
-    "beforeDevCommand": "",
-    "frontendDist": "../dist"
+    "beforeBuildCommand": "pnpm web:build",
+    "beforeDevCommand": "pnpm web:dev",
+    "frontendDist": "./dist",
+    "devUrl": "http://localhost:5173"
   },
   "app": {
     "withGlobalTauri": true,
@@ -29,11 +30,31 @@
       {
         "label": "main",
         "title": "BPM Sniffer",
-        "width": 420,
-        "height": 260,
-        "resizable": true
+        "url": "tauri://localhost/index.html",
+        "width": 390,
+        "height": 390,
+        "resizable": true,
+        "minWidth": 220,
+        "minHeight": 120,
+        "maxWidth": 390,
+        "maxHeight": 390,
+        "maximizable": false
       }
     ]
   },
-  "bundle": { "resources": [] }
+  "bundle": {
+    "resources": [],
+    "targets": ["nsis"]
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://your-cn-endpoint.example.com/updates/{{target}}/{{current_version}}",
+        "https://github.com/your-org/bpm-sniffer/releases/latest/download/latest.json"
+      ],
+      "dialog": false,
+      "pubkey": ""
+    }
+  }
 }

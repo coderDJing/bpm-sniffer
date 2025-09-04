@@ -4,9 +4,13 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "dev": "tauri dev",
+    "prebuild": "node -e \"const fs=require('fs');['src-tauri/dist','dist'].forEach(p=>{try{fs.rmSync(p,{recursive:true,force:true})}catch{}});\"",
+    "build": "tauri build --bundles nsis",
+    "preview": "vite preview",
+    "web:dev": "vite",
+    "web:build": "vite build",
+    "logo:gen": "node logo/snap-all.cjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
@@ -15,9 +19,12 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.8.3",
+    "@tauri-apps/plugin-updater": "^2",
     "@types/react": "^18.3.10",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "puppeteer": "^24.18.0",
+    "sharp": "^0.34.3",
     "typescript": "^5.5.4",
     "vite": "^5.4.8"
   },

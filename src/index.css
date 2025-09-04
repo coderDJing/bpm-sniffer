@@ -1,4 +1,4 @@
 * { box-sizing: border-box; }
-html, body, #root { height: 100%; margin: 0; }
+html, body, #root { height: 100%; margin: 0; overflow: hidden; }
 button { background: #eb1a50; color: #ffffff; border: 1px solid #c21441; border-radius: 8px; padding: 10px 16px; cursor: pointer; }
 button:hover { background: #c21441; }

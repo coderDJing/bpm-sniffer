@@ -6,7 +6,7 @@ fn logo_dir() -> PathBuf {
 }
 
 fn generate_icon_from_logo(dst: &Path) -> bool {
-    let sizes = [16u32, 32, 48, 256];
+    let sizes = [16u32, 20, 24, 32, 40, 48, 256];
     let base = logo_dir();
     let mut ico_dir = ico::IconDir::new(ico::ResourceType::Icon);
     let mut found_any = false;
@@ -55,13 +55,48 @@ fn generate_placeholder_icon(dst: &Path) {
 fn ensure_icon() {
     // 注意：这里必须是 crate 根下的路径：icons/icon.ico
     let icon_path = Path::new("icons/icon.ico");
-    if icon_path.exists() { return; }
-    if !generate_icon_from_logo(icon_path) {
-        generate_placeholder_icon(icon_path);
+
+    // 如果 ico 不存在，直接生成
+    if !icon_path.exists() {
+        if !generate_icon_from_logo(icon_path) {
+            generate_placeholder_icon(icon_path);
+        }
+        return;
+    }
+
+    // 若任一源 PNG 比 ico 新，则重建 ico
+    let srcs = [16u32, 20, 24, 32, 40, 48, 256]
+        .into_iter()
+        .map(|sz| logo_dir().join(format!("{sz}.png")))
+        .collect::<Vec<_>>();
+
+    let ico_mtime = fs::metadata(icon_path)
+        .and_then(|m| m.modified())
+        .ok();
+
+    let mut need_regen = false;
+    for p in &srcs {
+        if !p.exists() { continue; }
+        let newer = fs::metadata(p)
+            .and_then(|m| m.modified())
+            .ok()
+            .map(|t| ico_mtime.map_or(true, |it| t > it))
+            .unwrap_or(false);
+        if newer { need_regen = true; break; }
+    }
+
+    if need_regen {
+        if !generate_icon_from_logo(icon_path) {
+            generate_placeholder_icon(icon_path);
+        }
     }
 }
 
 fn main() {
+    // 当任意来源 PNG 发生变更时，触发重新运行 build.rs
+    for sz in [16u32, 20, 24, 32, 40, 48, 256] {
+        println!("cargo:rerun-if-changed=../logo/{sz}.png");
+    }
     ensure_icon();
     tauri_build::build();
 }

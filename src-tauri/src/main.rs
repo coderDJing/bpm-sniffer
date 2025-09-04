@@ -11,6 +11,7 @@ use anyhow::Result;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, Emitter};
 use tauri_plugin_single_instance::init as single_instance;
+use tauri_plugin_updater::UpdaterExt;
 
 use audio::AudioService;
 use tempo::{make_backend, TempoBackend};
@@ -142,6 +143,9 @@ fn run_capture(app: AppHandle) -> Result<()> {
                         let mut rms_acc = 0.0f32;
                         for &v in &buf { rms_acc += v * v; }
                         let rms = (rms_acc / len as f32).sqrt().min(1.0);
+                        // 可视化 RMS：对极低电平直接视为静音，立即归零
+                        let silent_cut = 0.015f32;
+                        let viz_rms = if rms < silent_cut { 0.0 } else { rms };
                         let step = (len as f32 / out_len as f32).max(1.0);
                         let mut out: Vec<f32> = Vec::with_capacity(out_len);
                         let mut idx_f = 0.0f32;
@@ -159,7 +163,7 @@ fn run_capture(app: AppHandle) -> Result<()> {
                         }
                         let nowv = now_ms();
                         if nowv.saturating_sub(last_viz_ms) >= 33 {
-                            let _ = app.emit_to("main", "viz_update", AudioViz { samples: out, rms });
+                            let _ = app.emit_to("main", "viz_update", AudioViz { samples: out, rms: viz_rms });
                             last_viz_ms = nowv;
                         }
                     } else {
@@ -237,7 +241,7 @@ fn run_capture(app: AppHandle) -> Result<()> {
             let snr_boost = (snr / 2.5).clamp(0.6, 1.15); // SNR≈2.5 时1.0；弱时0.6，强时上限1.15
             conf = (conf * snr_boost).clamp(0.0, 0.95);
 
-            // 对 aubio 的超短窗（win_sec 很小）采用更宽松的追踪阈值，避免长期停留在 analyzing
+            // 对超短窗（win_sec 很小）采用更宽松的追踪阈值，避免长期停留在 analyzing
             let is_ultra_short = raw.win_sec <= 0.1;
             let (thr_hi, thr_lo) = if is_ultra_short { (0.15f32, 0.08f32) } else { (hi_th, lo_th) };
 
@@ -598,6 +602,7 @@ fn stop_capture() -> Result<(), String> { Ok(()) }
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(single_instance(|app, _args, _cwd| {
             if let Some(win) = app.get_webview_window("main") { let _ = win.set_focus(); }
         }))

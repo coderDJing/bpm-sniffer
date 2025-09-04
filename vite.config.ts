@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [react()],
   build: {
     sourcemap: false,
-    outDir: 'dist'
+    outDir: 'src-tauri/dist'
   },
   server: {
     port: 5173,
