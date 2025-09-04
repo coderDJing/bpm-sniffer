@@ -6,11 +6,14 @@ import sun from './assets/sun.png'
 import moon from './assets/moon.png'
 // @ts-ignore: optional plugin at runtime
 import { check } from '@tauri-apps/plugin-updater'
+import { getVersion } from '@tauri-apps/api/app'
+import { t } from './i18n'
 
 type DisplayBpm = { bpm: number, confidence: number, state: 'tracking'|'uncertain'|'analyzing', level: number }
 type AudioViz = { samples: number[], rms: number }
 
 export default function App() {
+  const [route, setRoute] = useState<string>(typeof window !== 'undefined' ? window.location.hash : '')
   const [bpm, setBpm] = useState<number | null>(null)
   const [conf, setConf] = useState<number | null>(null)
   const [state, setState] = useState<DisplayBpm['state']>('analyzing')
@@ -18,6 +21,7 @@ export default function App() {
   const [viz, setViz] = useState<AudioViz | null>(null)
   const [vizMode, setVizMode] = useState<'wave'|'bars'|'waterfall'>('wave')
   const [themeName, setThemeName] = useState<'dark' | 'light'>('dark')
+  const [appVersion, setAppVersion] = useState<string>('')
   const mqlCleanupRef = useRef<null | (() => void)>(null)
 
   const darkTheme = {
@@ -84,15 +88,15 @@ export default function App() {
         } catch {}
 
         await invoke('start_capture')
+        // 获取应用版本号
+        try { const v = await getVersion(); setAppVersion(v) } catch {}
         // 静默检查并下载更新（可达性自动选择端点）
         try {
           const update = await check()
           if (update?.available) {
-            const downloaded = await update.downloadAndInstall()
-            if (downloaded) {
-              // 可选：立即重启，或下次启动生效
-              // await relaunch()
-            }
+            await update.downloadAndInstall()
+            // 可选：立即重启，或下次启动生效
+            // await relaunch()
           }
         } catch {}
         const unlistenA = await listen<DisplayBpm>('bpm_update', (e) => {
@@ -112,6 +116,25 @@ export default function App() {
     return () => { if (removeListener) removeListener() }
   }, [])
 
+  // 跨窗口主题同步：监听 localStorage 变化
+  useEffect(() => {
+    function onStorage(e: StorageEvent) {
+      if (e.key === 'bpm_theme') {
+        const v = e.newValue
+        if (v === 'dark' || v === 'light') setThemeName(v)
+      }
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
+
+  // 路由：用于关于独立窗口（/#about）
+  useEffect(() => {
+    const handler = () => setRoute(window.location.hash)
+    window.addEventListener('hashchange', handler)
+    return () => window.removeEventListener('hashchange', handler)
+  }, [])
+
 
   function toggleTheme() {
     const next = themeName === 'dark' ? 'light' : 'dark'
@@ -120,8 +143,8 @@ export default function App() {
     if (mqlCleanupRef.current) { mqlCleanupRef.current(); mqlCleanupRef.current = null }
   }
 
-  const label = state === 'tracking' ? '节拍稳定' : state === 'analyzing' ? '分析中' : '节拍不稳'
-  const confLabel = conf == null ? '—' : conf >= 0.75 ? '稳定' : conf >= 0.5 ? '较稳' : '不稳'
+  const label = state === 'tracking' ? t('state_tracking') : state === 'analyzing' ? t('state_analyzing') : t('state_uncertain')
+  const confLabel = conf == null ? '—' : conf >= 0.75 ? t('conf_stable') : conf >= 0.5 ? t('conf_medium') : t('conf_unstable')
   const confColor = conf == null ? theme.confGray : (conf >= 0.5 ? theme.textPrimary : theme.confGray)
   const bpmColor = conf == null ? theme.confGray : (conf >= 0.5 ? theme.textPrimary : theme.confGray)
 
@@ -170,13 +193,20 @@ export default function App() {
     try { localStorage.setItem('bpm_viz_mode', vizMode) } catch {}
   }, [vizMode])
 
+  // 独立关于窗口
+  if (route === '#about') {
+    return (
+      <AboutWindow themeName={themeName} setThemeName={setThemeName} appVersion={appVersion} />
+    )
+  }
+
   return (
     <main style={{height:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:16,background:theme.background,color:theme.textPrimary,overflow:'hidden'}}>
-      {!hideTitle && <h1 style={{margin:0,color:'#eb1a50',fontSize:18}}>BPM</h1>}
+      {!hideTitle && <h1 style={{margin:0,color:'#eb1a50',fontSize:18}}>{t('app_title')}</h1>}
       <div style={{fontSize:96,fontWeight:700,letterSpacing:2,color:bpmColor}}>{bpm == null ? 0 : Math.round(bpm)}</div>
       {!hideMeta && (
         <div style={{fontSize:14,color:theme.textSecondary}}>
-          {label} · 置信度：<span style={{color: confColor}}>{confLabel}</span>
+          {label} · {t('conf_label')}<span style={{color: confColor}}>{confLabel}</span>
         </div>
       )}
 
@@ -189,7 +219,7 @@ export default function App() {
       <div style={{position:'fixed',right:12,top:12,display:'flex',gap:8,alignItems:'center'}}>
         <button
           onClick={toggleTheme}
-          title={themeName === 'dark' ? '切换为日间模式' : '切换为夜间模式'}
+          title={themeName === 'dark' ? t('theme_toggle_to_light') : t('theme_toggle_to_dark')}
           style={{
             background:'transparent',
             border:'none',
@@ -205,7 +235,7 @@ export default function App() {
           <div style={{position:'relative', width:25, height:25}}>
             <img
               src={sun}
-              alt="日间"
+              alt={t('sun_alt')}
               width={25}
               height={25}
               style={{
@@ -219,7 +249,7 @@ export default function App() {
             />
             <img
               src={moon}
-              alt="夜间"
+              alt={t('moon_alt')}
               width={25}
               height={25}
               style={{
@@ -235,7 +265,7 @@ export default function App() {
         </button>
         <button
           onClick={toggleAlwaysOnTop}
-          title={alwaysOnTop ? '已置顶（点击取消）' : '置顶'}
+          title={alwaysOnTop ? t('pin_title_on') : t('pin_title_off')}
           style={{
             background:'transparent',
             border:'none',
@@ -250,7 +280,7 @@ export default function App() {
         >
           <img
             src={thumbtack}
-            alt={alwaysOnTop ? '已置顶' : '置顶'}
+            alt={alwaysOnTop ? t('pin_on') : t('pin_title_off')}
             width={25}
             height={25}
             style={{
@@ -263,6 +293,31 @@ export default function App() {
       )}
 
       {/* 调试面板已移除，仅保留导出功能 */}
+    </main>
+  )
+}
+
+function AboutWindow({ themeName, setThemeName, appVersion }: { themeName: 'dark'|'light', setThemeName: (v: 'dark'|'light') => void, appVersion: string }) {
+  const darkTheme = {
+    background: '#14060a', textPrimary: '#ffffff', textSecondary: '#f3a0b3', panelBg: '#1a0a0f'
+  }
+  const lightTheme = {
+    background: '#fff4f7', textPrimary: '#1b0a10', textSecondary: '#b21642', panelBg: '#ffe8ee'
+  }
+  const theme = themeName === 'dark' ? darkTheme : lightTheme
+  // 仅展示文字地址，不再尝试打开浏览器
+  return (
+    <main style={{height:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:12,background:theme.background,color:theme.textPrimary,overflow:'hidden'}}>
+      <div style={{width:320, background:theme.panelBg, border:'1px solid #1d2a3a', borderRadius:8, padding:14}}>
+        <div style={{fontWeight:700, marginBottom:8, color:'#eb1a50'}}>{t('about_title')}</div>
+        <div style={{fontSize:13, lineHeight:1.6}}>
+          <div>BPM Sniffer {appVersion ? `v${appVersion}` : ''}</div>
+          <div>{t('about_project')}<span style={{color:theme.textSecondary}}>https://github.com/coderDJing/bpm-sniffer</span></div>
+          <div>{t('about_author')}{t('about_author_name')}</div>
+          <div style={{marginTop:6}}>{t('about_contact')}<span style={{color:theme.textSecondary}}>jinlingwuyanzu@qq.com</span></div>
+        </div>
+        {/* 关闭按钮已移除，保持简洁展示 */}
+      </div>
     </main>
   )
 }
@@ -455,7 +510,7 @@ function VizPanel({ theme, hideRms, viz, mode, onToggle }: { theme: any, hideRms
         {mode === 'wave' ? renderWave() : mode === 'bars' ? renderBars() : renderWaterfall()}
       </svg>
       {!hideRms && (
-        <div title="RMS（均方根）是音频能量/响度的近似，越大代表越响" style={{display:'flex', alignItems:'center', gap:8}}>
+        <div title={t('rms_tooltip')} style={{display:'flex', alignItems:'center', gap:8}}>
           <div style={{width:Math.max(60, w-70), height:8, background:'#3a0b17', borderRadius:4, overflow:'hidden'}}>
             <div style={{width:barLen, height:'100%', background:accent, transition:'width 120ms'}} />
           </div>

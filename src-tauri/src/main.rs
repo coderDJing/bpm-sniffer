@@ -11,7 +11,12 @@ use anyhow::Result;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, Emitter};
 use tauri_plugin_single_instance::init as single_instance;
-use tauri_plugin_updater::UpdaterExt;
+// use tauri_plugin_updater::UpdaterExt;
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::tray::TrayIconBuilder;
+use tauri::Url;
+use tauri::webview::WebviewWindowBuilder;
+use tauri::WebviewUrl;
 
 use audio::AudioService;
 use tempo::{make_backend, TempoBackend};
@@ -603,9 +608,67 @@ fn stop_capture() -> Result<(), String> { Ok(()) }
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_opener::init())
         .plugin(single_instance(|app, _args, _cwd| {
             if let Some(win) = app.get_webview_window("main") { let _ = win.set_focus(); }
         }))
+        .setup(|app| {
+            // 系统托盘与菜单
+            let about = MenuItemBuilder::new("关于").id("about").build(app)?;
+            let quit = MenuItemBuilder::new("退出").id("quit").build(app)?;
+            let menu = MenuBuilder::new(app)
+                .items(&[&about, &quit])
+                .build()?;
+
+            let icon = app.default_window_icon().cloned();
+            let mut tray_builder = TrayIconBuilder::new()
+                .menu(&menu)
+                .on_menu_event(|app, event| {
+                    match event.id().as_ref() {
+                        "about" => {
+                            if let Some(win) = app.get_webview_window("about") {
+                                let _ = win.set_focus();
+                            } else {
+                                // dev / prod 不同 URL
+                                #[cfg(debug_assertions)]
+                                let url = Url::parse("http://localhost:5173/#about").unwrap();
+                                #[cfg(not(debug_assertions))]
+                                let url = Url::parse("tauri://localhost/index.html#about").unwrap();
+                                let _ = WebviewWindowBuilder::new(app, "about", WebviewUrl::External(url))
+                                    .title("关于 BPM Sniffer")
+                                    .resizable(false)
+                                    .inner_size(360.0, 280.0)
+                                    .build();
+                            }
+                        }
+                        "quit" => {
+                            app.exit(0);
+                        }
+                        _ => {}
+                    }
+                });
+            if let Some(ic) = icon { tray_builder = tray_builder.icon(ic); }
+            tray_builder.build(app)?;
+
+            // 开发模式下显式导航至 Vite 开发服务器，避免资源协议映射异常
+            #[cfg(debug_assertions)]
+            {
+                let app_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    // 最多等待 ~2.5 秒，直到主窗口可获取
+                    for _ in 0..50 {
+                        if let Some(win) = app_handle.get_webview_window("main") {
+                            if let Ok(url) = Url::parse("http://localhost:5173") {
+                                let _ = win.navigate(url);
+                            }
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                });
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![start_capture, stop_capture, get_current_bpm, set_always_on_top])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "BPM Sniffer",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "identifier": "com.renlu.bpm-sniffer",
   "build": {
     "beforeBuildCommand": "pnpm web:build",
     "beforeDevCommand": "pnpm web:dev",
-    "frontendDist": "./dist",
+    "frontendDist": "src-tauri/dist",
     "devUrl": "http://localhost:5173"
   },
   "app": {
@@ -16,8 +16,8 @@
         {
           "identifier": "app",
           "platforms": ["windows"],
-          "windows": ["main"],
-          "webviews": ["main"],
+          "windows": ["main", "about"],
+          "webviews": ["main", "about"],
           "permissions": [
             "core:default",
             "core:event:allow-listen",
@@ -30,7 +30,7 @@
       {
         "label": "main",
         "title": "BPM Sniffer",
-        "url": "tauri://localhost/index.html",
+        "url": "tauri://localhost",
         "width": 390,
         "height": 390,
         "resizable": true,
@@ -43,7 +43,9 @@
     ]
   },
   "bundle": {
-    "resources": [],
+    "resources": [
+      "icons/icon.ico"
+    ],
     "targets": ["nsis"]
   },
   "plugins": {
@@ -55,6 +57,9 @@
       ],
       "dialog": false,
       "pubkey": ""
+    },
+    "opener": {
+      "requireLiteralLeadingDot": false
     }
   }
 }
