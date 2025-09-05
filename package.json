@@ -1,7 +1,7 @@
 {
   "name": "bpm-sniffer-ui",
   "private": true,
-  "version": "1.0.0-rc3",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "node scripts/prepare-updater-endpoints.cjs && tauri dev",
