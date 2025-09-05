@@ -2,6 +2,8 @@
 
 轻量节拍(BPM)探测器。基于 Tauri v2 + React 构建。
 
+还在开发中，不要轻信现在的代码和release
+
 ### 开发
 
 ```bash
