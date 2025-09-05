@@ -15,9 +15,17 @@
       "capabilities": [
         {
           "identifier": "app",
-          "platforms": ["windows"],
-          "windows": ["main", "about"],
-          "webviews": ["main", "about"],
+          "platforms": [
+            "windows"
+          ],
+          "windows": [
+            "main",
+            "about"
+          ],
+          "webviews": [
+            "main",
+            "about"
+          ],
           "permissions": [
             "core:default",
             "core:event:allow-listen",
@@ -46,14 +54,15 @@
     "resources": [
       "icons/icon.ico"
     ],
-    "targets": ["nsis"]
+    "targets": [
+      "nsis"
+    ]
   },
   "plugins": {
     "updater": {
       "active": true,
       "endpoints": [
-        "https://your-cn-endpoint.example.com/updates/{{target}}/{{current_version}}",
-        "https://github.com/your-org/bpm-sniffer/releases/latest/download/latest.json"
+        "https://github.com/coderDJing/bpm-sniffer/releases/latest/download/latest.json"
       ],
       "dialog": false,
       "pubkey": ""
