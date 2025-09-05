@@ -311,10 +311,19 @@ function AboutWindow({ themeName, setThemeName, appVersion }: { themeName: 'dark
       <div style={{width:320, background:theme.panelBg, border:'1px solid #1d2a3a', borderRadius:8, padding:14}}>
         <div style={{fontWeight:700, marginBottom:8, color:'#eb1a50'}}>{t('about_title')}</div>
         <div style={{fontSize:13, lineHeight:1.6}}>
-          <div>BPM Sniffer {appVersion ? `v${appVersion}` : ''}</div>
-          <div>{t('about_project')}<span style={{color:theme.textSecondary}}>https://github.com/coderDJing/bpm-sniffer</span></div>
-          <div>{t('about_author')}{t('about_author_name')}</div>
-          <div style={{marginTop:6}}>{t('about_contact')}<span style={{color:theme.textSecondary}}>jinlingwuyanzu@qq.com</span></div>
+          <div style={{marginBottom:6}}>BPM Sniffer {appVersion ? `v${appVersion}` : ''}</div>
+          <div style={{display:'flex', flexDirection:'column', gap:2}}>
+            <span style={{color:theme.textPrimary}}>{t('about_project')}</span>
+            <span style={{color:theme.textSecondary}}>https://github.com/coderDJing/bpm-sniffer</span>
+          </div>
+          <div style={{display:'flex', flexDirection:'column', gap:2, marginTop:6}}>
+            <span style={{color:theme.textPrimary}}>{t('about_author')}</span>
+            <span style={{color:theme.textSecondary}}>{t('about_author_name')}</span>
+          </div>
+          <div style={{display:'flex', flexDirection:'column', gap:2, marginTop:6}}>
+            <span style={{color:theme.textPrimary}}>{t('about_contact')}</span>
+            <span style={{color:theme.textSecondary}}>jinlingwuyanzu@qq.com</span>
+          </div>
         </div>
         {/* 关闭按钮已移除，保持简洁展示 */}
       </div>

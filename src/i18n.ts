@@ -22,13 +22,13 @@ type Dict = Record<string, { 'zh-CN': string, en: string }>
 
 const dict: Dict = {
   app_title: { 'zh-CN': 'BPM', en: 'BPM' },
-  state_tracking: { 'zh-CN': '节拍稳定', en: 'Stable beat' },
+  state_tracking: { 'zh-CN': '节拍稳定', en: 'Stable' },
   state_analyzing: { 'zh-CN': '分析中', en: 'Analyzing' },
-  state_uncertain: { 'zh-CN': '节拍不稳', en: 'Unstable beat' },
+  state_uncertain: { 'zh-CN': '节拍不稳', en: 'Unstable' },
   conf_label: { 'zh-CN': '置信度：', en: 'Confidence: ' },
-  conf_stable: { 'zh-CN': '稳定', en: 'Stable' },
-  conf_medium: { 'zh-CN': '较稳', en: 'Medium' },
-  conf_unstable: { 'zh-CN': '不稳', en: 'Unstable' },
+  conf_stable: { 'zh-CN': '稳定', en: 'High' },
+  conf_medium: { 'zh-CN': '较稳', en: 'Med' },
+  conf_unstable: { 'zh-CN': '不稳', en: 'Low' },
   theme_toggle_to_light: { 'zh-CN': '切换为日间模式', en: 'Switch to light mode' },
   theme_toggle_to_dark: { 'zh-CN': '切换为夜间模式', en: 'Switch to dark mode' },
   pin_on: { 'zh-CN': '已置顶', en: 'Pinned' },

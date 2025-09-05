@@ -42,6 +42,8 @@ struct AudioViz {
 static CURRENT_BPM: OnceLock<Mutex<Option<DisplayBpm>>> = OnceLock::new();
 static COLLECTED_LOGS: OnceLock<Mutex<Vec<BackendLog>>> = OnceLock::new();
 const EMIT_TEXT_LOGS: bool = true;
+// 可视化输出的下采样波形长度（与前端保持一致）
+const OUT_LEN: usize = 192;
 
 #[tauri::command]
 fn start_capture(app: AppHandle) -> Result<(), String> {
@@ -142,7 +144,6 @@ fn run_capture(app: AppHandle) -> Result<()> {
             match rx.recv_timeout(Duration::from_millis(20)) {
                 Ok(mut buf) => {
                     // 先基于当前包生成可视化，再将其推入窗口，避免 drain 后访问空缓冲
-                    let out_len = 192usize; // 降低单帧数据量以提升帧率
                     if !buf.is_empty() {
                         let len = buf.len();
                         let mut rms_acc = 0.0f32;
@@ -151,30 +152,36 @@ fn run_capture(app: AppHandle) -> Result<()> {
                         // 可视化 RMS：对极低电平直接视为静音，立即归零
                         let silent_cut = 0.015f32;
                         let viz_rms = if rms < silent_cut { 0.0 } else { rms };
-                        let step = (len as f32 / out_len as f32).max(1.0);
-                        let mut out: Vec<f32> = Vec::with_capacity(out_len);
-                        let mut idx_f = 0.0f32;
-                        for _ in 0..out_len {
-                            let i0 = idx_f as usize;
-                            let i1 = ((idx_f + step) as usize).min(len);
-                            let mut acc = 0.0f32;
-                            let mut cnt = 0usize;
-                            if i0 < i1 {
-                                // i1 不包含，因此无需 -1，索引范围总小于 len
-                                for i in i0..i1 { acc += buf[i]; cnt += 1; }
-                            }
-                            out.push(if cnt > 0 { (acc / cnt as f32).clamp(-1.0, 1.0) } else { 0.0 });
-                            idx_f += step;
-                        }
                         let nowv = now_ms();
                         if nowv.saturating_sub(last_viz_ms) >= 33 {
-                            let _ = app.emit_to("main", "viz_update", AudioViz { samples: out, rms: viz_rms });
+                            if viz_rms == 0.0 {
+                                // 极低电平：波形与 RMS 同步归零
+                                let _ = app.emit_to("main", "viz_update", AudioViz { samples: vec![0.0; OUT_LEN], rms: 0.0 });
+                            } else {
+                                // 下采样生成可视化波形
+                                let step = (len as f32 / OUT_LEN as f32).max(1.0);
+                                let mut out: Vec<f32> = Vec::with_capacity(OUT_LEN);
+                                let mut idx_f = 0.0f32;
+                                for _ in 0..OUT_LEN {
+                                    let i0 = idx_f as usize;
+                                    let i1 = ((idx_f + step) as usize).min(len);
+                                    let mut acc = 0.0f32;
+                                    let mut cnt = 0usize;
+                                    if i0 < i1 {
+                                        // i1 不包含，因此无需 -1，索引范围总小于 len
+                                        for i in i0..i1 { acc += buf[i]; cnt += 1; }
+                                    }
+                                    out.push(if cnt > 0 { (acc / cnt as f32).clamp(-1.0, 1.0) } else { 0.0 });
+                                    idx_f += step;
+                                }
+                                let _ = app.emit_to("main", "viz_update", AudioViz { samples: out, rms: viz_rms });
+                            }
                             last_viz_ms = nowv;
                         }
                     } else {
                         let nowv = now_ms();
                         if nowv.saturating_sub(last_viz_ms) >= 33 {
-                            let _ = app.emit_to("main", "viz_update", AudioViz { samples: vec![0.0; out_len], rms: 0.0 });
+                            let _ = app.emit_to("main", "viz_update", AudioViz { samples: vec![0.0; OUT_LEN], rms: 0.0 });
                             last_viz_ms = nowv;
                         }
                     }
@@ -185,6 +192,12 @@ fn run_capture(app: AppHandle) -> Result<()> {
                 }
                 Err(_) => {
                     no_data_ms += 20;
+                    // 持续无数据时，仍以 ~30fps 推送零波形与零RMS，避免前端残留上一帧
+                    let nowv = now_ms();
+                    if nowv.saturating_sub(last_viz_ms) >= 33 {
+                        let _ = app.emit_to("main", "viz_update", AudioViz { samples: vec![0.0; OUT_LEN], rms: 0.0 });
+                        last_viz_ms = nowv;
+                    }
                     if no_data_ms >= 1500 {
                         // 长时间无数据，视为静音，推送 0 BPM
                         tracking = false; ever_locked = false; hi_cnt = 0; lo_cnt = 0;
@@ -613,9 +626,9 @@ fn main() {
             if let Some(win) = app.get_webview_window("main") { let _ = win.set_focus(); }
         }))
         .setup(|app| {
-            // 系统托盘与菜单
-            let about = MenuItemBuilder::new("关于").id("about").build(app)?;
-            let quit = MenuItemBuilder::new("退出").id("quit").build(app)?;
+            // 系统托盘与菜单（临时固定英文）
+            let about = MenuItemBuilder::new("About").id("about").build(app)?;
+            let quit = MenuItemBuilder::new("Quit").id("quit").build(app)?;
             let menu = MenuBuilder::new(app)
                 .items(&[&about, &quit])
                 .build()?;
@@ -635,7 +648,7 @@ fn main() {
                                 #[cfg(not(debug_assertions))]
                                 let url = Url::parse("tauri://localhost/index.html#about").unwrap();
                                 let _ = WebviewWindowBuilder::new(app, "about", WebviewUrl::External(url))
-                                    .title("关于 BPM Sniffer")
+                                    .title("About BPM Sniffer")
                                     .resizable(false)
                                     .inner_size(360.0, 280.0)
                                     .build();
