@@ -22,7 +22,14 @@ export default function App() {
   const [vizMode, setVizMode] = useState<'wave'|'bars'|'waterfall'>('wave')
   const [themeName, setThemeName] = useState<'dark' | 'light'>('dark')
   const [appVersion, setAppVersion] = useState<string>('')
+  const [updateReady, setUpdateReady] = useState<boolean>(false)
   const mqlCleanupRef = useRef<null | (() => void)>(null)
+  // 高亮锁：当某个值在高置信度下被高亮后，如果之后收到同值但低置信度的数据，仍保持高亮，直到值发生变化
+  const bpmRef = useRef<number | null>(null)
+  const highlightLockRef = useRef<{ locked: boolean, bpm: number | null }>({ locked: false, bpm: null })
+  // 低置信度同值连续计数：当灰显同值连续达到阈值（如5）时，自动视为需要高亮
+  const lowConfStreakRef = useRef<{ bpm: number | null, count: number }>({ bpm: null, count: 0 })
+  const lowConfPromoteThreshold = 5
 
   const darkTheme = {
     background: '#14060a',
@@ -95,16 +102,56 @@ export default function App() {
           const update = await check()
           if (update?.available) {
             await update.downloadAndInstall()
-            // 可选：立即重启，或下次启动生效
-            // await relaunch()
+            // 轻提示：已更新完毕，下次重启生效（需要用户手动关闭）
+            setUpdateReady(true)
+            // 可选：不自动重启，保留当前会话；如需立即生效可调用 relaunch()
           }
         } catch {}
         const unlistenA = await listen<DisplayBpm>('bpm_update', (e) => {
           const res = e.payload
+          // 计算即将展示的 BPM（后端传 0 则沿用上一值），并基于“显示整数值”进行比较/锁定
+          const currentDisplayed = bpmRef.current // 原始值
+          const nextBpm = res.bpm > 0 ? res.bpm : currentDisplayed // 原始值
+          const currentDisplayedInt = currentDisplayed != null ? Math.round(currentDisplayed) : null
+          const incomingInt = res.bpm > 0 ? Math.round(res.bpm) : null
+          const nextDisplayInt = nextBpm != null ? Math.round(nextBpm) : null
+
+          // 若“显示整数值”发生变化，取消之前的高亮锁并重置计数
+          if (incomingInt != null && currentDisplayedInt != null && incomingInt !== currentDisplayedInt) {
+            highlightLockRef.current = { locked: false, bpm: null }
+            lowConfStreakRef.current = { bpm: null, count: 0 }
+          }
+          // 若当前置信度足够高，则为该值加锁（保持高亮）
+          if (res.confidence >= 0.5 && nextDisplayInt != null) {
+            highlightLockRef.current = { locked: true, bpm: nextDisplayInt }
+            // 高置信度到来时重置低置信度连续计数
+            lowConfStreakRef.current = { bpm: null, count: 0 }
+          }
+
+          // 若当前置信度较低，但连续 5 次报告同一个有效 BPM，则也视为需要高亮
+          if (res.confidence < 0.5) {
+            if (incomingInt != null && currentDisplayedInt != null && incomingInt === currentDisplayedInt) {
+              if (lowConfStreakRef.current.bpm === incomingInt) {
+                lowConfStreakRef.current.count += 1
+              } else {
+                lowConfStreakRef.current = { bpm: incomingInt, count: 1 }
+              }
+              if (lowConfStreakRef.current.count >= lowConfPromoteThreshold && nextDisplayInt != null) {
+                highlightLockRef.current = { locked: true, bpm: nextDisplayInt }
+              }
+            } else if (incomingInt != null) {
+              // 低置信度但值不同或与当前显示不一致，重置为新值计数起点
+              lowConfStreakRef.current = { bpm: incomingInt, count: 1 }
+            }
+          }
+
           setConf(res.confidence)
           setState(res.state)
           // 后端已做过滤：收到即显示；为0则保留上一次
-          if (res.bpm > 0) setBpm(res.bpm)
+          if (res.bpm > 0) {
+            setBpm(res.bpm)
+            bpmRef.current = res.bpm
+          }
         })
         const unlistenD = await listen<AudioViz>('viz_update', (e) => {
           setViz(e.payload as any as AudioViz)
@@ -143,10 +190,18 @@ export default function App() {
     if (mqlCleanupRef.current) { mqlCleanupRef.current(); mqlCleanupRef.current = null }
   }
 
-  const label = state === 'tracking' ? t('state_tracking') : state === 'analyzing' ? t('state_analyzing') : t('state_uncertain')
-  const confLabel = conf == null ? '—' : conf >= 0.75 ? t('conf_stable') : conf >= 0.5 ? t('conf_medium') : t('conf_unstable')
-  const confColor = conf == null ? theme.confGray : (conf >= 0.5 ? theme.textPrimary : theme.confGray)
-  const bpmColor = conf == null ? theme.confGray : (conf >= 0.5 ? theme.textPrimary : theme.confGray)
+  const baseLabel = state === 'tracking' ? t('state_tracking') : state === 'analyzing' ? t('state_analyzing') : t('state_uncertain')
+  const baseConfLabel = conf == null ? '—' : conf >= 0.75 ? t('conf_stable') : conf >= 0.5 ? t('conf_medium') : t('conf_unstable')
+  const baseConfColor = conf == null ? theme.confGray : (conf >= 0.5 ? theme.textPrimary : theme.confGray)
+  // 当高亮锁生效且锁定的值与当前显示值一致时，始终使用高亮颜色
+  const currentDisplayedBpm = (bpm == null ? bpmRef.current : bpm)
+  const currentDisplayedIntForColor = currentDisplayedBpm != null ? Math.round(currentDisplayedBpm) : null
+  const isLockedHighlight = !!(highlightLockRef.current.locked && highlightLockRef.current.bpm != null && highlightLockRef.current.bpm === currentDisplayedIntForColor)
+  const confLabel = isLockedHighlight ? t('conf_stable') : baseConfLabel
+  const confColor = isLockedHighlight ? theme.textPrimary : baseConfColor
+  const bpmColor = isLockedHighlight ? theme.textPrimary : (conf == null ? theme.confGray : (conf >= 0.5 ? theme.textPrimary : theme.confGray))
+  // 状态标签“节拍不稳”在锁定时显示为“追踪中”，但“分析中”优先级最高，始终显示“分析中”
+  const label = state === 'analyzing' ? t('state_analyzing') : (isLockedHighlight ? t('state_tracking') : baseLabel)
 
   // 已固定后端为基础模式，无切换
 
@@ -202,6 +257,12 @@ export default function App() {
 
   return (
     <main style={{height:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:16,background:theme.background,color:theme.textPrimary,overflow:'hidden'}}>
+      {updateReady && (
+        <div style={{position:'fixed',left:'50%',transform:'translateX(-50%)',bottom:16,background:theme.panelBg,border:'1px solid #1d2a3a',borderRadius:8,padding:'10px 12px',display:'flex',alignItems:'center',gap:10,zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.35)'}}>
+          <span style={{fontSize:12,color:theme.textPrimary}}>{t('update_ready')}</span>
+          <button onClick={() => setUpdateReady(false)} style={{fontSize:12,background:'transparent',border:'1px solid #3a0b17',color:theme.textSecondary,borderRadius:6,cursor:'pointer',padding:'4px 8px'}}>{t('close')}</button>
+        </div>
+      )}
       {!hideTitle && <h1 style={{margin:0,color:'#eb1a50',fontSize:18}}>{t('app_title')}</h1>}
       <div style={{fontSize:96,fontWeight:700,letterSpacing:2,color:bpmColor}}>{bpm == null ? 0 : Math.round(bpm)}</div>
       {!hideMeta && (

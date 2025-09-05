@@ -42,6 +42,8 @@ const dict: Dict = {
   sun_alt: { 'zh-CN': '日间', en: 'Light' },
   moon_alt: { 'zh-CN': '夜间', en: 'Dark' },
   rms_tooltip: { 'zh-CN': 'RMS（均方根）是音频能量/响度的近似，越大代表越响', en: 'RMS approximates audio energy/loudness; higher means louder' },
+  update_ready: { 'zh-CN': '已更新到新版本，下次重新启动时生效', en: 'Updated to new version. Takes effect on next restart.' },
+  close: { 'zh-CN': '关闭', en: 'Close' },
 }
 
 export function t(key: keyof typeof dict): string {

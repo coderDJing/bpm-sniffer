@@ -90,7 +90,7 @@ fn now_ms() -> u64 {
 }
 
 fn run_capture(app: AppHandle) -> Result<()> {
-    let (svc, rx) = AudioService::start_loopback()?;
+    let (svc, rx, sr_rx) = AudioService::start_loopback()?;
 
     let mut backend: Box<dyn TempoBackend> = make_backend(svc.sample_rate());
 
@@ -104,9 +104,9 @@ fn run_capture(app: AppHandle) -> Result<()> {
     let mut none_cnt = 0usize;
 
     // 滑动窗口：窗口 2s，步长 0.5s（重叠 75%）
-    let sr_usize = svc.sample_rate() as usize;
-    let target_len = sr_usize * 2;
-    let hop_len = sr_usize / 2;
+    let mut sr_usize = svc.sample_rate() as usize;
+    let mut target_len = sr_usize * 2;
+    let mut hop_len = sr_usize / 2;
     let mut window: VecDeque<f32> = VecDeque::with_capacity(target_len * 2);
     let mut no_data_ms: u64 = 0;
     let mut silent_win_cnt: usize = 0;
@@ -141,6 +141,22 @@ fn run_capture(app: AppHandle) -> Result<()> {
     loop {
         // 仅 Simple；阻塞接收，直至累积 ≥ 窗口大小（带超时）
         while window.len() < target_len {
+            // 优先监听采样率变化；若变化则重建后端并清空窗口
+            if let Ok(new_sr) = sr_rx.try_recv() {
+                if new_sr as usize != sr_usize {
+                    sr_usize = new_sr as usize;
+                    target_len = sr_usize * 2;
+                    hop_len = sr_usize / 2;
+                    backend = make_backend(new_sr);
+                    window.clear();
+                    disp_hist.clear(); ema_disp = None; prev_rms_db = None; anchor_bpm = None; stable_vals.clear();
+                    hi_cnt = 0; lo_cnt = 0; tracking = false; ever_locked = false; none_cnt = 0; dev_from_lock_cnt = 0; force_clear_lock = true;
+                    // 立即向前端发一次可视化清零，避免残影
+                    let _ = app.emit_to("main", "viz_update", AudioViz { samples: vec![0.0; OUT_LEN], rms: 0.0 });
+                    // 告知 0 BPM 状态，直到新数据到来
+                    if let Some(cell) = CURRENT_BPM.get() { if let Ok(mut guard) = cell.lock() { let payload = DisplayBpm { bpm: 0.0, confidence: 0.0, state: "analyzing", level: 0.0 }; *guard = Some(payload); let _ = app.emit_to("main", "bpm_update", payload); } }
+                }
+            }
             match rx.recv_timeout(Duration::from_millis(20)) {
                 Ok(mut buf) => {
                     // 先基于当前包生成可视化，再将其推入窗口，避免 drain 后访问空缓冲
@@ -619,8 +635,15 @@ fn run_capture(app: AppHandle) -> Result<()> {
 fn stop_capture() -> Result<(), String> { Ok(()) }
 
 fn main() {
+    // 尝试加载本地环境变量文件（用于本地开发/私有更新源覆盖）
+    let _ = dotenvy::from_filename(".env.local");
+    let _ = dotenvy::dotenv();
+
+    // 端点合并改为构建期脚本处理；此处仅初始化插件（端点取自 tauri.conf.json）
+    let updater_builder = tauri_plugin_updater::Builder::new();
+
     tauri::Builder::default()
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(updater_builder.build())
         .plugin(tauri_plugin_opener::init())
         .plugin(single_instance(|app, _args, _cwd| {
             if let Some(win) = app.get_webview_window("main") { let _ = win.set_focus(); }

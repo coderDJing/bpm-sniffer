@@ -21,6 +21,8 @@ serde_json = "1"
 crossbeam-channel = "0.5"
 thiserror = "1"
 anyhow = "1"
+# 环境变量加载（本地覆盖更新端点）
+dotenvy = "0.15"
 # Windows WASAPI / COM
 windows = { version = "0.61", features = [
   "Win32_Foundation",

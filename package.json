@@ -4,9 +4,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tauri dev",
-    "prebuild": "node -e \"const fs=require('fs');['src-tauri/dist','dist'].forEach(p=>{try{fs.rmSync(p,{recursive:true,force:true})}catch{}});\"",
-    "build": "tauri build --bundles nsis",
+    "dev": "node scripts/prepare-updater-endpoints.cjs && tauri dev",
+    "prebuild": "node -e \"const fs=require('fs');['src-tauri/dist','dist'].forEach(p=>{try{fs.rmSync(p,{recursive:true,force:true})}catch{}});\" && node scripts/prepare-updater-endpoints.cjs",
+    "build": "node scripts/prepare-updater-endpoints.cjs && tauri build --bundles nsis",
     "preview": "vite preview",
     "web:dev": "vite",
     "web:build": "vite build",

@@ -6,8 +6,8 @@ use std::{ptr, thread, time::Duration};
 use windows::core::PCWSTR;
 use windows::Win32::Media::Audio::*;
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_ALL, COINIT_MULTITHREADED};
-use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject, INFINITE};
-use windows::Win32::Foundation::CloseHandle;
+use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
+use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0, WAIT_TIMEOUT};
 
 const WAVE_FORMAT_PCM: u16 = 1;
 const WAVE_FORMAT_IEEE_FLOAT: u16 = 3;
@@ -17,10 +17,12 @@ pub struct AudioService {
 }
 
 impl AudioService {
-    pub fn start_loopback() -> Result<(Self, Receiver<Vec<f32>>)> {
+    pub fn start_loopback() -> Result<(Self, Receiver<Vec<f32>>, Receiver<u32>)> {
         let (frames_tx, frames_rx) = bounded::<Vec<f32>>(16);
         // 初始化结果通道：Ok(sample_rate) 或 Err
         let (init_tx, init_rx) = bounded::<Result<u32>>(1);
+        // 运行时采样率变化通知通道（非阻塞，容量小即可）
+        let (sr_tx, sr_rx) = bounded::<u32>(4);
 
         thread::spawn(move || unsafe {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED).ok();
@@ -33,6 +35,8 @@ impl AudioService {
 
             // 首次初始化结果仅发送一次（用于返回采样率）
             let mut sent_init = false;
+            // 最近一次成功启动时的采样率，用于变化检测
+            let mut last_sr: Option<u32> = None;
 
             loop {
                 // 获取当前默认渲染端点并激活 AudioClient
@@ -109,6 +113,11 @@ impl AudioService {
                     }
                 };
 
+                // 采样率变化通知（含首次启动）
+                if last_sr.map_or(true, |prev| prev != sample_rate) {
+                    let _ = sr_tx.try_send(sample_rate);
+                    last_sr = Some(sample_rate);
+                }
                 // 首次初始化时返回采样率
                 if !sent_init { let _ = init_tx.send(Ok(sample_rate)); sent_init = true; }
 
@@ -128,7 +137,17 @@ impl AudioService {
                     }
                     if changed { break; }
 
-                    let _ = WaitForSingleObject(h_event, INFINITE);
+                    // 使用有限超时避免设备失效时的死等，超时则回到循环顶部做设备变更检查
+                    let wait_res = WaitForSingleObject(h_event, 200);
+                    if wait_res == WAIT_OBJECT_0 {
+                        // 事件触发，继续读取缓冲
+                    } else if wait_res == WAIT_TIMEOUT {
+                        // 超时，回到顶部检查设备是否已切换
+                        continue;
+                    } else {
+                        // 异常，跳出重建
+                        break;
+                    }
                     let mut packet_len = match capture_client.GetNextPacketSize() { Ok(n) => n, Err(_) => break };
                     while packet_len > 0 {
                         let mut data_ptr: *mut u8 = ptr::null_mut();
@@ -184,7 +203,7 @@ impl AudioService {
 
         // 等待初始化结果（拿到采样率或错误）
         let sample_rate = init_rx.recv().map_err(|_| anyhow!("audio init channel closed"))??;
-        Ok((Self { sample_rate }, frames_rx))
+        Ok((Self { sample_rate }, frames_rx, sr_rx))
     }
 
     pub fn sample_rate(&self) -> u32 { self.sample_rate }

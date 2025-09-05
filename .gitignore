@@ -1,3 +1,18 @@
+# 忽略本地环境变量文件（私有更新端点等）
+.env
+.env.local
+
+# 前端构建产物
+dist/
+src-tauri/dist/
+
+# Tauri 打包输出
+src-tauri/target/
+src-tauri/target-release/
+
+# 依赖目录
+node_modules/
+
 # Logs
 logs
 *.log
