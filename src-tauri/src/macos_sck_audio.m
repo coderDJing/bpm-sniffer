@@ -2,6 +2,7 @@
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #import <CoreMedia/CoreMedia.h>
 #import <AudioToolbox/AudioFormat.h>
+#import <CoreAudio/CoreAudio.h>
 
 // 将 crossbeam_channel::Sender<Vec<f32>> 的裸指针传入，回调时发送单声道 f32 帧
 static SCStream* gStream = nil;
@@ -122,31 +123,27 @@ static id gOutputChangeObserver = nil;
 bool sck_audio_start(void* tx_ptr) {
   @autoreleasepool {
     gTxPtr = tx_ptr;
-    if (@available(macOS 12.3, *)) {
+    if (@available(macOS 13.0, *)) {
       // 异步获取可共享内容，然后启动仅音频流
       [SCShareableContent getShareableContentWithCompletionHandler:^(SCShareableContent * _Nullable content, NSError * _Nullable error) {
         if (error || content.displays.count == 0) { return; }
         SCDisplay* display = content.displays.firstObject;
         SCContentFilter* filter = [[SCContentFilter alloc] initWithDisplay:display excludingWindows:@[]];
-        SCAudioConfiguration* audioCfg = [SCAudioConfiguration new];
-        audioCfg.mode = SCAudioOutputModeAppAudio; // 系统/应用音频
+        // macOS 13+：使用 SCStreamConfiguration 捕获系统音频
         SCStreamConfiguration* cfg = [SCStreamConfiguration new];
-        cfg.capturesAudio = YES; cfg.capturesVideo = NO; cfg.audioConfiguration = audioCfg;
+        cfg.capturesAudio = YES;
+        cfg.capturesVideo = NO;
         gStream = [[SCStream alloc] initWithFilter:filter configuration:cfg delegate:nil];
         gStreamOutput = [AudioOnlyOutput new];
-        [gStream addStreamOutput:gStreamOutput type:SCStreamOutputTypeAudio sampleHandlerQueue:dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0)];
+        if ([gStream respondsToSelector:@selector(addStreamOutput:type:sampleHandlerQueue:)]) {
+          [gStream addStreamOutput:gStreamOutput type:SCStreamOutputTypeAudio sampleHandlerQueue:dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0)];
+        }
         [gStream startCaptureWithCompletionHandler:^(NSError * _Nullable err2) {
           // 可在此记录错误或成功日志
         }];
       }];
       // 监听默认输出设备变化（通过通知中心）并重建流
-      if (!gOutputChangeObserver) {
-        gOutputChangeObserver = [[NSNotificationCenter defaultCenter] addObserverForName:AVAudioSessionRouteChangeNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification * _Nonnull note) {
-          // 简单重建流：先停再启
-          sck_audio_stop();
-          sck_audio_start(gTxPtr);
-        }];
-      }
+      // macOS 上没有 AVAudioSession 事件，这里暂不监听输出路由变化
       return true; // 提前返回，不阻塞
     } else {
       return false;

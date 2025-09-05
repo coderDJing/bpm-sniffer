@@ -99,7 +99,11 @@ fn build_macos_objc_bridge() {
     cc::Build::new()
         .file("src/macos_sck_audio.m")
         .flag("-fobjc-arc")
+        // 将最低系统版本提升到 13.0，以匹配所用 ScreenCaptureKit API 能力
+        .flag("-mmacosx-version-min=13.0")
         .compile("macos_sck_audio");
+    // 同步为 Rust 链接阶段指定最低系统版本
+    println!("cargo:rustc-link-arg=-mmacosx-version-min=13.0");
     println!("cargo:rustc-link-lib=framework=ScreenCaptureKit");
     println!("cargo:rustc-link-lib=framework=AVFoundation");
     println!("cargo:rustc-link-lib=framework=CoreMedia");

@@ -50,5 +50,7 @@ jobs:
           releaseDraft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
           includeUpdaterJson: true
+          distPath: src-tauri/dist
+          args: --bundles nsis
           # 该 Action 会在发布中附带 latest.json（v2 插件使用），
           # 如需显式开关，可按官方文档添加 includeUpdaterJson/updaterJson 选项。
