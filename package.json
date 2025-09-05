@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "web:dev": "vite",
     "web:build": "vite build",
-    "logo:gen": "node logo/snap-all.cjs"
+    "logo:gen": "node logo/snap-all.cjs && pnpm exec tauri icon logo/256.png && node -e \"const fs=require('fs');const p='src-tauri/icons';['android','ios'].forEach(d=>{try{fs.rmSync(p+'/'+d,{recursive:true,force:true})}catch{}});fs.readdirSync(p).filter(f=>/^Square.*\\.png$/.test(f)||f==='StoreLogo.png').forEach(f=>{try{fs.rmSync(p+'/'+f,{force:true})}catch{}})\""
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",

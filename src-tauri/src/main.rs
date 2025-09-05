@@ -1,6 +1,11 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
+#[cfg(target_os = "windows")]
 mod audio;
+#[cfg(target_os = "macos")]
+mod sck_audio;
+#[cfg(target_os = "macos")]
+use sck_audio as audio;
 mod bpm;
 mod tempo;
 
@@ -684,6 +689,11 @@ fn main() {
                     }
                 });
             if let Some(ic) = icon { tray_builder = tray_builder.icon(ic); }
+            // macOS：使用模板图标以自动适配浅/深色菜单栏
+            #[cfg(target_os = "macos")]
+            {
+                tray_builder = tray_builder.icon_as_template(true);
+            }
             tray_builder.build(app)?;
 
             // 开发模式下显式导航至 Vite 开发服务器，避免资源协议映射异常

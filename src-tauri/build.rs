@@ -92,11 +92,33 @@ fn ensure_icon() {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn build_macos_objc_bridge() {
+    // 仅在 macOS 主机上编译并链接 Objective-C 桥接与系统框架
+    println!("cargo:rerun-if-changed=src/macos_sck_audio.m");
+    cc::Build::new()
+        .file("src/macos_sck_audio.m")
+        .flag("-fobjc-arc")
+        .compile("macos_sck_audio");
+    println!("cargo:rustc-link-lib=framework=ScreenCaptureKit");
+    println!("cargo:rustc-link-lib=framework=AVFoundation");
+    println!("cargo:rustc-link-lib=framework=CoreMedia");
+    println!("cargo:rustc-link-lib=framework=CoreGraphics");
+    println!("cargo:rustc-link-lib=framework=CoreAudio");
+}
+
+#[cfg(not(target_os = "macos"))]
+fn build_macos_objc_bridge() {
+    // 非 macOS 主机上不需要任何处理
+}
+
 fn main() {
     // 当任意来源 PNG 发生变更时，触发重新运行 build.rs
     for sz in [16u32, 20, 24, 32, 40, 48, 256] {
         println!("cargo:rerun-if-changed=../logo/{sz}.png");
     }
+    // 按主机系统决定是否编译 macOS 桥接与链接框架
+    build_macos_objc_bridge();
     ensure_icon();
     tauri_build::build();
 }
