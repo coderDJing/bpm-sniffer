@@ -6,7 +6,7 @@
   "build": {
     "beforeBuildCommand": "pnpm web:build",
     "beforeDevCommand": "pnpm web:dev",
-    "frontendDist": "src-tauri/dist",
+    "frontendDist": "dist",
     "devUrl": "http://localhost:5173"
   },
   "app": {
