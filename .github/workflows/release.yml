@@ -47,6 +47,7 @@ jobs:
           VITE_RELEASE_CHANNEL: ${{ contains(github.ref_name, '-') && 'pre' || 'stable' }}
         with:
           # 使用触发的 tag，避免额外创建 v__VERSION__ 的 tag/release
+          tagName: ${{ github.ref_name }}
           releaseName: 'BPM Sniffer ${{ github.ref_name }}'
           releaseDraft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
