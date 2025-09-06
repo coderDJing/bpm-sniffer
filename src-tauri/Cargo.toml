@@ -24,7 +24,7 @@ anyhow = "1"
 # 环境变量加载（本地覆盖更新端点）
 dotenvy = "0.15"
 # Windows WASAPI / COM
-# Windows 平台专用依赖（避免在 macOS/Linux 下拉取）
+# Windows 平台专用依赖
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.61", features = [
   "Win32_Foundation",
@@ -42,16 +42,4 @@ tauri-plugin-single-instance = "2"
 [features]
 default = []
 
-# macOS 需要链接系统框架：ScreenCaptureKit、CoreMedia、AVFoundation 等
-[target.'cfg(target_os = "macos")'.build-dependencies]
-bindgen = { version = "0.69", default-features = false, features = ["runtime"] }
-cc = "1.1"
 
-[target.'cfg(target_os = "macos")'.dependencies]
-objc = "0.2"
-block = "0.1"
-core-foundation = "0.9"
-core-graphics = "0.23"
-core-media-sys = "0.1"
-dispatch = "0.2"
-once_cell = "1"

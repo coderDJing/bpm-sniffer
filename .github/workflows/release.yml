@@ -7,11 +7,7 @@ on:
 
 jobs:
   build-and-release:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest, macos-13]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
 
     steps:
       - name: Checkout

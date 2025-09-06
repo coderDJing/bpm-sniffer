@@ -16,8 +16,7 @@
         {
           "identifier": "app",
           "platforms": [
-            "windows",
-            "macOS"
+            "windows"
           ],
           "windows": [
             "main",
@@ -56,8 +55,7 @@
       "icons/icon.ico"
     ],
     "targets": [
-      "nsis",
-      "dmg"
+      "nsis"
     ]
   },
   "plugins": {
