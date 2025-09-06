@@ -674,7 +674,7 @@ fn main() {
                                 let _ = WebviewWindowBuilder::new(app, "about", WebviewUrl::External(url))
                                     .title("About BPM Sniffer")
                                     .resizable(false)
-                                    .inner_size(360.0, 280.0)
+                                    .inner_size(360.0, 360.0)
                                     .build();
                             }
                         }
