@@ -32,8 +32,8 @@ jobs:
       - name: Prepare updater endpoints (merge env & GitHub)
         run: node scripts/prepare-updater-endpoints.cjs
         env:
-          UPDATER_ENDPOINTS: ${{ secrets.UPDATER_ENDPOINTS }}
-          UPDATER_ENDPOINT: ${{ secrets.UPDATER_ENDPOINT }}
+          # 根据是否为预发布决定通道端点：pre 通道使用固定 tag `pre`，稳定通道使用 `latest`
+          UPDATER_ENDPOINT: ${{ contains(github.ref_name, '-') && format('https://github.com/{0}/releases/download/pre/latest.json', github.repository) || format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) }}
 
       - name: Tauri Build & Release
         uses: tauri-apps/tauri-action@v0
@@ -41,8 +41,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          UPDATER_ENDPOINTS: ${{ secrets.UPDATER_ENDPOINTS }}
-          UPDATER_ENDPOINT: ${{ secrets.UPDATER_ENDPOINT }}
+          # 将端点注入到构建中
+          UPDATER_ENDPOINT: ${{ contains(github.ref_name, '-') && format('https://github.com/{0}/releases/download/pre/latest.json', github.repository) || format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) }}
+          # 注入前端通道变量：pre/stable
+          VITE_RELEASE_CHANNEL: ${{ contains(github.ref_name, '-') && 'pre' || 'stable' }}
         with:
           tagName: v__VERSION__
           releaseName: 'BPM Sniffer v__VERSION__'
@@ -53,3 +55,17 @@ jobs:
           args: --bundles nsis
           # 该 Action 会在发布中附带 latest.json（v2 插件使用），
           # 如需显式开关，可按官方文档添加 includeUpdaterJson/updaterJson 选项。
+
+      - name: Sync pre-channel assets to tag `pre`
+        if: contains(github.ref_name, '-')
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: pre
+          prerelease: true
+          files: |
+            src-tauri/target/release/bundle/**/latest.json
+            src-tauri/target/release/bundle/nsis/*.nsis.zip
+            src-tauri/target/release/bundle/nsis/*.nsis.zip.sig
+            src-tauri/target/release/bundle/nsis/*-setup.exe

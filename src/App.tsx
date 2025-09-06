@@ -107,6 +107,8 @@ export default function App() {
             // 可选：不自动重启，保留当前会话；如需立即生效可调用 relaunch()
           }
         } catch {}
+
+        
         const unlistenA = await listen<DisplayBpm>('bpm_update', (e) => {
           const res = e.payload
           // 计算即将展示的 BPM（后端传 0 则沿用上一值），并基于“显示整数值”进行比较/锁定
@@ -236,7 +238,6 @@ export default function App() {
       setHideActions(w < 310)
       // 强制一次轻量刷新，确保宽度自适应在静态画面时也更新
       setSizeTick((t) => (t + 1) % 1000000)
-      console.log(`[win] ${window.innerWidth} x ${window.innerHeight}`)
     }
     onResize()
     window.addEventListener('resize', onResize)
@@ -258,9 +259,9 @@ export default function App() {
   return (
     <main style={{height:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:16,background:theme.background,color:theme.textPrimary,overflow:'hidden'}}>
       {updateReady && (
-        <div style={{position:'fixed',left:'50%',transform:'translateX(-50%)',bottom:16,background:theme.panelBg,border:'1px solid #1d2a3a',borderRadius:8,padding:'10px 12px',display:'flex',alignItems:'center',gap:10,zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.35)'}}>
-          <span style={{fontSize:12,color:theme.textPrimary}}>{t('update_ready')}</span>
-          <button onClick={() => setUpdateReady(false)} style={{fontSize:12,background:'transparent',border:'1px solid #3a0b17',color:theme.textSecondary,borderRadius:6,cursor:'pointer',padding:'4px 8px'}}>{t('close')}</button>
+        <div style={{position:'fixed',left:'50%',transform:'translateX(-50%)',bottom:16,background:theme.panelBg,border:'1px solid #1d2a3a',borderRadius:8,padding:'10px 12px',display:'flex',alignItems:'center',gap:10,zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.35)',minWidth:'min(360px, calc(100vw - 32px))',maxWidth:'calc(100vw - 32px)',flexWrap:'nowrap',justifyContent:'flex-start'}}>
+          <span style={{fontSize:12,color:theme.textPrimary,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',flex:'1 1 auto',minWidth:0}}>{t('update_ready')}</span>
+          <button onClick={() => setUpdateReady(false)} style={{fontSize:12,background:'transparent',border:'1px solid #3a0b17',color:theme.textSecondary,borderRadius:6,cursor:'pointer',padding:'4px 8px',whiteSpace:'nowrap',display:'inline-flex',alignItems:'center',justifyContent:'center'}}>{t('close')}</button>
         </div>
       )}
       {!hideTitle && <h1 style={{margin:0,color:'#eb1a50',fontSize:18}}>{t('app_title')}</h1>}
@@ -373,6 +374,13 @@ function AboutWindow({ themeName, setThemeName, appVersion }: { themeName: 'dark
         <div style={{fontWeight:700, marginBottom:8, color:'#eb1a50'}}>{t('about_title')}</div>
         <div style={{fontSize:13, lineHeight:1.6}}>
           <div style={{marginBottom:6}}>BPM Sniffer {appVersion ? `v${appVersion}` : ''}</div>
+          {/* 预发布提示：仅当 VITE_RELEASE_CHANNEL === 'pre' 时显示 */}
+          {import.meta.env.VITE_RELEASE_CHANNEL === 'pre' && (
+            <div style={{margin:'6px 0 10px 0', padding:'6px 8px', border:'1px dashed #b21642', borderRadius:6, color:theme.textSecondary}}>
+              <div style={{fontWeight:600, marginBottom:4}}>{t('pre_tip_title')}</div>
+              <div style={{fontSize:12}}>{t('pre_tip_text')}</div>
+            </div>
+          )}
           <div style={{display:'flex', flexDirection:'column', gap:2}}>
             <span style={{color:theme.textPrimary}}>{t('about_project')}</span>
             <span style={{color:theme.textSecondary}}>https://github.com/coderDJing/bpm-sniffer</span>

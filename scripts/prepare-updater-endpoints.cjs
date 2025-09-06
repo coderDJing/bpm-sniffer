@@ -1,4 +1,4 @@
-// 根据环境变量合并 updater 端点：环境端点优先 + 固定 GitHub 端点
+// 根据环境变量覆盖 updater 端点：仅在设置了环境端点时覆盖
 // 运行时机：dev/build 之前
 const fs = require('fs')
 const path = require('path')
@@ -51,26 +51,13 @@ function main() {
     .map(s => s.trim())
     .filter(Boolean)
 
-  // 基于策略：如果存在环境端点，则 envList + ghFixed；否则保持原配置不动
+  // 策略：如果存在环境端点，则完全覆盖；否则保持原配置不动（由 tauri.conf.json 决定）
   if (envList.length > 0) {
-    const merged = [...envList]
-    if (!merged.includes(ghFixed)) merged.push(ghFixed)
-    updater.endpoints = merged
+    updater.endpoints = envList
     plugin.updater = updater
     conf.plugins = plugin
     writeJSON(confPath, conf)
-    console.log('[prepare-updater-endpoints] endpoints set to:', merged)
-  } else {
-    // 没有环境端点，确保至少包含 ghFixed（如果用户本就只留了 ghFixed 则不变）
-    const list = Array.isArray(updater.endpoints) ? updater.endpoints.slice() : []
-    if (!list.includes(ghFixed)) {
-      list.push(ghFixed)
-      updater.endpoints = list
-      plugin.updater = updater
-      conf.plugins = plugin
-      writeJSON(confPath, conf)
-      console.log('[prepare-updater-endpoints] ensured default gh endpoint present')
-    }
+    console.log('[prepare-updater-endpoints] endpoints set to:', envList)
   }
 }
 
