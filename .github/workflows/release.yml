@@ -145,5 +145,5 @@ jobs:
           prerelease: true
           files: |
             latest.json
-            pre-assets/*_x64-setup.exe*
-            pre-assets/*_x64-setup.exe.sig*
+            pre-assets/*_x64-setup.exe
+            pre-assets/*_x64-setup.exe.sig
