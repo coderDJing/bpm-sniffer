@@ -72,6 +72,18 @@ jobs:
           # 该 Action 会在发布中附带 latest.json（v2 插件使用），
           # 如需显式开关，可按官方文档添加 includeUpdaterJson/updaterJson 选项。
 
+      # 手动上传 updater 产物到“本次 tag 的 Release”（兼容 tauri-action 未自动上传的情况）
+      - name: Upload updater artifacts to current release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            src-tauri/target/release/bundle/updater/*.zip
+            src-tauri/target/release/bundle/updater/*.zip.sig
+
       # 预发布：从“本次 tag 的 Release”下载 latest.json 到工作区
       - name: Download latest.json from current release
         if: contains(github.ref_name, '-')
@@ -89,9 +101,16 @@ jobs:
         with:
           repository: ${{ github.repository }}
           tag: ${{ github.ref_name }}
-          fileName: "*_x64*.zip*"
+          fileName: "*.zip*"
           out-file-path: pre-assets
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Repoint latest.json URLs to `pre`
+        if: contains(github.ref_name, '-')
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -E -i 's#/releases/download/[^/]+/#/releases/download/pre/#g' latest.json
 
       - name: Sync pre-channel assets to tag `pre`
         if: contains(github.ref_name, '-')
@@ -103,5 +122,5 @@ jobs:
           prerelease: true
           files: |
             latest.json
-            pre-assets/*.nsis.zip
-            pre-assets/*.nsis.zip.sig
+            pre-assets/*.zip
+            pre-assets/*.zip.sig
