@@ -85,13 +85,23 @@ jobs:
           out-file-path: .
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download NSIS installer and signature from current release
+      - name: Download NSIS installer from current release
         if: contains(github.ref_name, '-')
         uses: robinraju/release-downloader@v1
         with:
           repository: ${{ github.repository }}
           tag: ${{ github.ref_name }}
-          fileName: "*_x64-setup.exe*,*_x64-setup.exe.sig*"
+          fileName: "*_x64-setup.exe*"
+          out-file-path: pre-assets
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download NSIS installer signature from current release
+        if: contains(github.ref_name, '-')
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: ${{ github.repository }}
+          tag: ${{ github.ref_name }}
+          fileName: "*_x64-setup.exe.sig*"
           out-file-path: pre-assets
           token: ${{ secrets.GITHUB_TOKEN }}
 
