@@ -57,6 +57,17 @@ jobs:
           # 该 Action 会在发布中附带 latest.json（v2 插件使用），
           # 如需显式开关，可按官方文档添加 includeUpdaterJson/updaterJson 选项。
 
+      # 预发布：从“本次 tag 的 Release”下载 latest.json 到工作区
+      - name: Download latest.json from current release
+        if: contains(github.ref_name, '-')
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: ${{ github.repository }}
+          tag: ${{ github.ref_name }}
+          fileName: latest.json
+          out-file-path: .
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Sync pre-channel assets to tag `pre`
         if: contains(github.ref_name, '-')
         uses: softprops/action-gh-release@v2
@@ -66,8 +77,4 @@ jobs:
           tag_name: pre
           prerelease: true
           files: |
-            src-tauri/target/release/bundle/**/latest.json
-            src-tauri/target/release/bundle/nsis/*.nsis.zip
-            src-tauri/target/release/bundle/nsis/*.nsis.zip.sig
-            src-tauri/target/release/bundle/nsis/*-setup.exe
-            # v2: 不再单独上传 updater zip 产物
+            latest.json
