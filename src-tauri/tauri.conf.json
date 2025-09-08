@@ -55,7 +55,8 @@
       "icons/icon.ico"
     ],
     "targets": [
-      "nsis"
+      "nsis",
+      "updater"
     ]
   },
   "plugins": {
