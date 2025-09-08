@@ -13,6 +13,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, Emitter};
 use tauri_plugin_single_instance::init as single_instance;
 // use tauri_plugin_updater::UpdaterExt;
+use serde_json::Value as JsonValue;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::Url;
@@ -70,6 +71,25 @@ fn set_always_on_top(app: AppHandle, on_top: bool) -> Result<(), String> {
     } else {
         Err("window not found".into())
     }
+}
+
+#[tauri::command]
+fn get_updater_endpoints(app: AppHandle) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let conf = app.config();
+    if let Some(plugins) = &conf.plugins {
+        if let Some(updater_cfg) = plugins.get("updater") {
+            // 期望结构：{"endpoints": ["url1", "url2", ...]}
+            if let Some(arr) = updater_cfg.get("endpoints").and_then(|v: &JsonValue| v.as_array()) {
+                for v in arr {
+                    if let Some(s) = v.as_str() {
+                        out.push(s.to_string());
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 // 不再做 0.5 步进四舍五入，交由前端格式化显示
@@ -707,7 +727,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![start_capture, stop_capture, get_current_bpm, set_always_on_top])
+        .invoke_handler(tauri::generate_handler![start_capture, stop_capture, get_current_bpm, set_always_on_top, get_updater_endpoints])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
