@@ -29,6 +29,21 @@ jobs:
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
+      - name: Preflight check for signing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+            echo "::error::Missing TAURI_SIGNING_PRIVATE_KEY secret";
+            exit 1;
+          fi
+          if [[ -z "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ]]; then
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY_PASSWORD is empty (that's OK if your key has no password).";
+          fi
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
       - name: Prepare updater endpoints (merge env & GitHub)
         run: node scripts/prepare-updater-endpoints.cjs
         env:

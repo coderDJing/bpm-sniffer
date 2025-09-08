@@ -51,6 +51,7 @@
     ]
   },
   "bundle": {
+    "createUpdaterArtifacts": true,
     "resources": [
       "icons/icon.ico"
     ],
