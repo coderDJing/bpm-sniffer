@@ -68,6 +68,16 @@ jobs:
           out-file-path: .
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Download nsis updater zips from current release
+        if: contains(github.ref_name, '-')
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: ${{ github.repository }}
+          tag: ${{ github.ref_name }}
+          fileName: "*.nsis.zip*"
+          out-file-path: pre-assets
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Sync pre-channel assets to tag `pre`
         if: contains(github.ref_name, '-')
         uses: softprops/action-gh-release@v2
@@ -78,3 +88,5 @@ jobs:
           prerelease: true
           files: |
             latest.json
+            pre-assets/*.nsis.zip
+            pre-assets/*.nsis.zip.sig
