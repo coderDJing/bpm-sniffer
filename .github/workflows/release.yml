@@ -112,6 +112,29 @@ jobs:
           set -euo pipefail
           sed -E -i 's#/releases/download/[^/]+/#/releases/download/pre/#g' latest.json
 
+      - name: Cleanup assets on pre release
+        if: contains(github.ref_name, '-')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const tag = 'pre';
+            try {
+              const { data: release } = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+              if (release.assets && release.assets.length) {
+                for (const asset of release.assets) {
+                  try {
+                    await github.rest.repos.deleteReleaseAsset({ owner, repo, asset_id: asset.id });
+                  } catch (e) {
+                    core.warning(`delete asset failed: ${asset.name} -> ${e.message}`);
+                  }
+                }
+              }
+            } catch (e) {
+              core.warning(`pre release not found or cannot be fetched: ${e.message}`);
+            }
+
       - name: Sync pre-channel assets to tag `pre`
         if: contains(github.ref_name, '-')
         uses: softprops/action-gh-release@v2
