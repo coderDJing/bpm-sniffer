@@ -184,6 +184,19 @@ export default function App() {
     return () => window.removeEventListener('hashchange', handler)
   }, [])
 
+  // 全局禁用右键、选择与拖拽
+  useEffect(() => {
+    const prevent = (e: Event) => { e.preventDefault(); e.stopPropagation() }
+    window.addEventListener('contextmenu', prevent, { capture: true })
+    window.addEventListener('dragstart', prevent, { capture: true })
+    window.addEventListener('selectstart', prevent, { capture: true })
+    return () => {
+      window.removeEventListener('contextmenu', prevent, { capture: true } as any)
+      window.removeEventListener('dragstart', prevent, { capture: true } as any)
+      window.removeEventListener('selectstart', prevent, { capture: true } as any)
+    }
+  }, [])
+
 
   function toggleTheme() {
     const next = themeName === 'dark' ? 'light' : 'dark'
@@ -300,6 +313,7 @@ export default function App() {
               alt={t('sun_alt')}
               width={25}
               height={25}
+              draggable={false}
               style={{
                 position:'absolute',
                 left:0,
@@ -314,6 +328,7 @@ export default function App() {
               alt={t('moon_alt')}
               width={25}
               height={25}
+              draggable={false}
               style={{
                 position:'absolute',
                 left:0,
@@ -345,6 +360,7 @@ export default function App() {
             alt={alwaysOnTop ? t('pin_on') : t('pin_title_off')}
             width={25}
             height={25}
+            draggable={false}
             style={{
               transform: alwaysOnTop ? 'rotate(-45deg)' : 'none',
               transition:'transform 120ms ease'
