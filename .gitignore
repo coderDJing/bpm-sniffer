@@ -2,7 +2,8 @@
 # 忽略本地环境变量文件（私有更新端点等）
 .env
 .env.local
-
+*.key
+*.key.pub
 # 前端构建产物
 dist/
 src-tauri/dist/
