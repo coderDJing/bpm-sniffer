@@ -45,7 +45,12 @@ function main() {
   loadEnvFile(envPath)
   const getEnv = (k) => process.env[k] || fileEnv[k] || ''
 
-  const envEndpoints = getEnv('UPDATER_ENDPOINTS') || getEnv('UPDATER_ENDPOINT') || ''
+  // 支持自定义端点（优先）+ 通道端点组合
+  const envEndpoints = (
+    [getEnv('UPDATER_ENDPOINTS'), getEnv('UPDATER_ENDPOINT'), getEnv('CUSTOM_UPDATER_ENDPOINT'), getEnv('CHANNEL_UPDATER_ENDPOINT')]
+      .filter(Boolean)
+      .join(',')
+  )
   const envList = envEndpoints
     .split(',')
     .map(s => s.trim())

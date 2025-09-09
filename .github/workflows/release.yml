@@ -47,8 +47,10 @@ jobs:
       - name: Prepare updater endpoints (merge env & GitHub)
         run: node scripts/prepare-updater-endpoints.cjs
         env:
+          # 用户自定义的端点列表（可包含多个，用逗号分隔），来自仓库 Secrets
+          UPDATER_ENDPOINTS: ${{ secrets.UPDATER_ENDPOINTS != '' && format('{0},{1}', secrets.UPDATER_ENDPOINTS, env.CHANNEL_UPDATER_ENDPOINT) || env.CHANNEL_UPDATER_ENDPOINT }}
           # 根据是否为预发布决定通道端点：pre 通道使用固定 tag `pre`，稳定通道使用 `latest`
-          UPDATER_ENDPOINT: ${{ contains(github.ref_name, '-') && format('https://github.com/{0}/releases/download/pre/latest.json', github.repository) || format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) }}
+          CHANNEL_UPDATER_ENDPOINT: ${{ contains(github.ref_name, '-') && format('https://github.com/{0}/releases/download/pre/latest.json', github.repository) || format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) }}
 
       - name: Tauri Build & Release
         uses: tauri-apps/tauri-action@v0
@@ -56,8 +58,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # 将端点注入到构建中
-          UPDATER_ENDPOINT: ${{ contains(github.ref_name, '-') && format('https://github.com/{0}/releases/download/pre/latest.json', github.repository) || format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) }}
+          # 将端点注入到构建中（与上一步一致）。如果用户配置了 Secrets.UPDATER_ENDPOINTS，会与通道端点合并。
+          UPDATER_ENDPOINTS: ${{ secrets.UPDATER_ENDPOINTS != '' && format('{0},{1}', secrets.UPDATER_ENDPOINTS, env.CHANNEL_UPDATER_ENDPOINT) || env.CHANNEL_UPDATER_ENDPOINT }}
+          CHANNEL_UPDATER_ENDPOINT: ${{ contains(github.ref_name, '-') && format('https://github.com/{0}/releases/download/pre/latest.json', github.repository) || format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) }}
           # 注入前端通道变量：pre/stable
           VITE_RELEASE_CHANNEL: ${{ contains(github.ref_name, '-') && 'pre' || 'stable' }}
         with:
