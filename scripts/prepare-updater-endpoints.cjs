@@ -58,8 +58,10 @@ function main() {
     const seen = new Set()
     for (const u of envList) { if (!seen.has(u)) { seen.add(u); merged.push(u) } }
     for (const u of baseList) { if (!seen.has(u)) { seen.add(u); merged.push(u) } }
-    // 如基础配置里没有 GitHub 固定端点，则追加（保证兜底）
-    if (!seen.has(ghFixed)) { merged.push(ghFixed) }
+    // 通道策略：仅在稳定通道（或未指定通道）时追加 GitHub latest 兜底；预发布通道不追加，避免串台
+    const channel = (getEnv('VITE_RELEASE_CHANNEL') || '').trim().toLowerCase()
+    const isPre = channel === 'pre' || /-/.test(process.env.GITHUB_REF_NAME || '')
+    if (!isPre && !seen.has(ghFixed)) { merged.push(ghFixed) }
     updater.endpoints = merged
     plugin.updater = updater
     conf.plugins = plugin

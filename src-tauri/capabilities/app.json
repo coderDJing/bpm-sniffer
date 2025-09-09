@@ -4,6 +4,10 @@
   "platforms": ["windows"],
   "permissions": [
     "core:default",
-    "core:event:allow-listen"
+    "core:event:allow-listen",
+    "updater:default",
+    "updater:allow-check",
+    "updater:allow-download",
+    "updater:allow-install"
   ]
 }
