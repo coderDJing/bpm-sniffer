@@ -67,6 +67,11 @@ function main() {
     const channel = (getEnv('VITE_RELEASE_CHANNEL') || '').trim().toLowerCase()
     const isPre = channel === 'pre' || /-/.test(process.env.GITHUB_REF_NAME || '')
     if (!isPre && !seen.has(ghFixed)) { merged.push(ghFixed) }
+
+    // 恢复为合并后的原始列表（不做 HTTPS 过滤）。
+    // 注意：如配置了非 HTTPS 端点，Tauri Updater 插件会在运行时拒绝。
+    // 若你需要在没有 HTTPS 的情况下避免崩溃，请不要设置该端点（留空即可）。
+    updater.active = true
     updater.endpoints = merged
     plugin.updater = updater
     conf.plugins = plugin
