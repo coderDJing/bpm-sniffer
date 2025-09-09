@@ -77,14 +77,13 @@ fn set_always_on_top(app: AppHandle, on_top: bool) -> Result<(), String> {
 fn get_updater_endpoints(app: AppHandle) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let conf = app.config();
-    if let Some(plugins) = &conf.plugins {
-        if let Some(updater_cfg) = plugins.get("updater") {
-            // 期望结构：{"endpoints": ["url1", "url2", ...]}
-            if let Some(arr) = updater_cfg.get("endpoints").and_then(|v: &JsonValue| v.as_array()) {
-                for v in arr {
-                    if let Some(s) = v.as_str() {
-                        out.push(s.to_string());
-                    }
+    let plugins = &conf.plugins;
+    if let Some(updater_cfg) = plugins.0.get("updater") {
+        // 期望结构：{"endpoints": ["url1", "url2", ...]}
+        if let Some(arr) = updater_cfg.get("endpoints").and_then(|v: &JsonValue| v.as_array()) {
+            for v in arr {
+                if let Some(s) = v.as_str() {
+                    out.push(s.to_string());
                 }
             }
         }

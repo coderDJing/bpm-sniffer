@@ -51,13 +51,20 @@ function main() {
     .map(s => s.trim())
     .filter(Boolean)
 
-  // 策略：如果存在环境端点，则完全覆盖；否则保持原配置不动（由 tauri.conf.json 决定）
+  // 策略更新：若存在环境端点，则与配置中的端点合并（去重，环境端点优先），以便多个端点共存
   if (envList.length > 0) {
-    updater.endpoints = envList
+    const baseList = Array.isArray(updater.endpoints) ? updater.endpoints.slice() : []
+    const merged = []
+    const seen = new Set()
+    for (const u of envList) { if (!seen.has(u)) { seen.add(u); merged.push(u) } }
+    for (const u of baseList) { if (!seen.has(u)) { seen.add(u); merged.push(u) } }
+    // 如基础配置里没有 GitHub 固定端点，则追加（保证兜底）
+    if (!seen.has(ghFixed)) { merged.push(ghFixed) }
+    updater.endpoints = merged
     plugin.updater = updater
     conf.plugins = plugin
     writeJSON(confPath, conf)
-    console.log('[prepare-updater-endpoints] endpoints set to:', envList)
+    console.log('[prepare-updater-endpoints] endpoints merged to:', merged)
   }
 }
 
