@@ -6,6 +6,7 @@ mod bpm;
 mod tempo;
 
 use std::{thread, time::Duration, sync::{Mutex, OnceLock}};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::fs::{self, OpenOptions};
 use std::io::Write as IoWrite;
 use std::collections::VecDeque;
@@ -45,6 +46,7 @@ struct AudioViz {
 
 static CURRENT_BPM: OnceLock<Mutex<Option<DisplayBpm>>> = OnceLock::new();
 static COLLECTED_LOGS: OnceLock<Mutex<Vec<BackendLog>>> = OnceLock::new();
+static RESET_REQUESTED: OnceLock<AtomicBool> = OnceLock::new();
 const EMIT_TEXT_LOGS: bool = true;
 // 可视化输出的下采样波形长度（与前端保持一致）
 const OUT_LEN: usize = 192;
@@ -117,6 +119,7 @@ fn setup_logging(app: &tauri::AppHandle) {
 fn start_capture(app: AppHandle) -> Result<(), String> {
     let _ = CURRENT_BPM.set(Mutex::new(None));
     let _ = COLLECTED_LOGS.set(Mutex::new(Vec::new()));
+    let _ = RESET_REQUESTED.set(AtomicBool::new(false));
     thread::spawn(move || {
         if let Err(_e) = run_capture(app) { }
     });
@@ -163,6 +166,29 @@ fn get_log_dir(app: AppHandle) -> Result<String, String> {
     let mut d = p.clone();
     d.push("logs");
     Ok(d.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn reset_backend(app: AppHandle) -> Result<(), String> {
+    if let Some(flag) = RESET_REQUESTED.get() {
+        flag.store(true, Ordering::SeqCst);
+    }
+    // 日志：记录刷新请求
+    append_log_line("[USER] reset_backend invoked");
+    eprintln!("[USER] reset_backend invoked");
+    let log = BackendLog { t_ms: now_ms(), msg: "[USER] reset_backend invoked".to_string() };
+    let _ = app.emit_to("main", "bpm_log", log.clone());
+    if let Some(cell) = COLLECTED_LOGS.get() { if let Ok(mut g) = cell.lock() { g.push(log); } }
+    // 立即向前端发一次清零，提升“已重置”的即时反馈
+    let _ = app.emit_to("main", "viz_update", AudioViz { samples: vec![0.0; OUT_LEN], rms: 0.0 });
+    if let Some(cell) = CURRENT_BPM.get() {
+        if let Ok(mut guard) = cell.lock() {
+            let payload = DisplayBpm { bpm: 0.0, confidence: 0.0, state: "analyzing", level: 0.0 };
+            *guard = Some(payload);
+            let _ = app.emit_to("main", "bpm_update", payload);
+        }
+    }
+    Ok(())
 }
 
 // 不再做 0.5 步进四舍五入，交由前端格式化显示
@@ -233,6 +259,18 @@ fn run_capture(app: AppHandle) -> Result<()> {
     // 请求在下一次整数锁阶段清空锁
     let mut force_clear_lock: bool = false;
     loop {
+        // 软重置：收到请求后清空内部状态与窗口，向前端清零
+        if let Some(flag) = RESET_REQUESTED.get() {
+            if flag.swap(false, Ordering::SeqCst) {
+                window.clear();
+                disp_hist.clear(); ema_disp = None; prev_rms_db = None; anchor_bpm = None; stable_vals.clear();
+                hi_cnt = 0; lo_cnt = 0; tracking = false; ever_locked = false; none_cnt = 0; dev_from_lock_cnt = 0; force_clear_lock = true;
+                recent_none_flag = false; last_hard_int = None; last_hard_state = None; trk_x = None; trk_v = 0.0;
+                recent_ints.clear(); recent_ints_cand.clear(); noise_floor_rms = 0.01;
+                let _ = app.emit_to("main", "viz_update", AudioViz { samples: vec![0.0; OUT_LEN], rms: 0.0 });
+                if let Some(cell) = CURRENT_BPM.get() { if let Ok(mut guard) = cell.lock() { let payload = DisplayBpm { bpm: 0.0, confidence: 0.0, state: "analyzing", level: 0.0 }; *guard = Some(payload); let _ = app.emit_to("main", "bpm_update", payload); } }
+            }
+        }
         // 仅 Simple；阻塞接收，直至累积 ≥ 窗口大小（带超时）
         while window.len() < target_len {
             // 优先监听采样率变化；若变化则重建后端并清空窗口
@@ -804,7 +842,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![start_capture, stop_capture, get_current_bpm, set_always_on_top, get_updater_endpoints, get_log_dir])
+        .invoke_handler(tauri::generate_handler![start_capture, stop_capture, get_current_bpm, set_always_on_top, get_updater_endpoints, get_log_dir, reset_backend])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

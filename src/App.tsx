@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event'
 import thumbtack from './assets/thumbtack.png'
 import sun from './assets/sun.png'
 import moon from './assets/moon.png'
+import refresh from './assets/refresh.png'
 // @ts-ignore: optional plugin at runtime
 import { check } from '@tauri-apps/plugin-updater'
 import { getVersion } from '@tauri-apps/api/app'
@@ -357,6 +358,7 @@ export default function App() {
   const [hideActions, setHideActions] = useState(false)
   // 轻量触发器：即便各隐藏标志未变化，也强制刷新以更新 VizPanel 宽度
   const [sizeTick, setSizeTick] = useState(0)
+  const [refreshSpin, setRefreshSpin] = useState(false)
   useEffect(() => {
     function onResize() {
       const h = window.innerHeight
@@ -411,6 +413,50 @@ export default function App() {
       {!hideActions && (
       <div style={{position:'fixed',right:12,top:12,display:'flex',gap:8,alignItems:'center'}}>
         <button
+          onClick={async () => {
+            if (refreshSpin) return
+            setRefreshSpin(true)
+            try {
+              // 清空前端可见状态
+              setBpm(null); bpmRef.current = null
+              setConf(null)
+              setState('analyzing')
+              setViz(null)
+              highlightLockRef.current = { locked: false, bpm: null }
+              lowConfStreakRef.current = { bpm: null, count: 0 }
+              // 通知后端软重置
+              try { await invoke('reset_backend') } catch {}
+            } finally {
+              // 启动一次 360° 顺时针旋转动画
+              setTimeout(() => setRefreshSpin(false), 420)
+            }
+          }}
+          title={t('refresh') || '刷新'}
+          style={{
+            background:'transparent',
+            border:'none',
+            padding:0,
+            cursor:'pointer',
+            width:25,
+            height:25,
+            display:'flex',
+            alignItems:'center',
+            justifyContent:'center'
+          }}
+        >
+          <img
+            src={refresh}
+            alt={t('refresh') || '刷新'}
+            width={22}
+            height={22}
+            draggable={false}
+            style={{
+              transition:'transform 360ms ease',
+              transform: refreshSpin ? 'rotate(360deg)' : 'rotate(0deg)'
+            }}
+          />
+        </button>
+        <button
           onClick={toggleTheme}
           title={themeName === 'dark' ? t('theme_toggle_to_light') : t('theme_toggle_to_dark')}
           style={{
@@ -436,8 +482,8 @@ export default function App() {
                 position:'absolute',
                 left:0,
                 top:0,
-                opacity: themeName === 'dark' ? 1 : 0,
-                transform: themeName === 'dark' ? 'rotate(0deg) scale(1)' : 'rotate(-90deg) scale(0.85)',
+                opacity: themeName === 'dark' ? 0 : 1,
+                transform: themeName === 'dark' ? 'rotate(-90deg) scale(0.85)' : 'rotate(0deg) scale(1)',
                 transition:'opacity 180ms ease, transform 220ms ease'
               }}
             />
@@ -451,8 +497,8 @@ export default function App() {
                 position:'absolute',
                 left:0,
                 top:0,
-                opacity: themeName === 'dark' ? 0 : 1,
-                transform: themeName === 'dark' ? 'rotate(90deg) scale(0.85)' : 'rotate(0deg) scale(1)',
+                opacity: themeName === 'dark' ? 1 : 0,
+                transform: themeName === 'dark' ? 'rotate(0deg) scale(1)' : 'rotate(90deg) scale(0.85)',
                 transition:'opacity 180ms ease, transform 220ms ease'
               }}
             />

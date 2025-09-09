@@ -46,6 +46,7 @@ const dict: Dict = {
   close: { 'zh-CN': '关闭', en: 'Close' },
   pre_tip_title: { 'zh-CN': '预发布版本', en: 'Pre-release' },
   pre_tip_text: { 'zh-CN': '该版本仅用于测试与反馈，功能与稳定性可能变化，请谨慎使用或下载正式版。', en: 'Testing build; features may change. Prefer stable release.' },
+  refresh: { 'zh-CN': '刷新', en: 'Refresh' },
 }
 
 export function t(key: keyof typeof dict): string {
