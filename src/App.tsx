@@ -512,6 +512,7 @@ export default function App() {
             <button disabled={!updRef.current || updChecking} onClick={doDownloadAndInstall} style={{fontSize:12,padding:'6px 10px',opacity: (!updRef.current || updChecking) ? 0.6 : 1}}>下载并安装</button>
             <button disabled={updChecking} onClick={async () => { try { const eps = await invoke<string[]>('get_updater_endpoints'); setUpdEndpoints(Array.isArray(eps) ? eps : []); pushUpdLog('已刷新端点'); } catch { pushUpdLog('刷新端点失败'); } }} style={{fontSize:12,padding:'6px 10px'}}>刷新端点</button>
             <button disabled={updChecking} onClick={() => setUpdLogs([])} style={{fontSize:12,padding:'6px 10px'}}>清空日志</button>
+            <button disabled={updChecking} onClick={async () => { try { const dir = await invoke<string>('get_log_dir'); await (window as any).__TAURI__?.shell?.open?.(dir); pushUpdLog(`已打开日志目录：${dir}`)} catch (e:any) { pushUpdLog(`打开日志目录失败: ${e?.message||String(e)}`) } }} style={{fontSize:12,padding:'6px 10px'}}>打开日志目录</button>
           </div>
           <div style={{flex:'1 1 auto',minHeight:80,overflow:'auto',background:'#0f070b',border:'1px solid #1d2a3a',borderRadius:6,padding:'6px 8px',userSelect:'text',WebkitUserSelect:'text',msUserSelect:'text'}}>
             {updLogs.length ? updLogs.map((l, i) => (

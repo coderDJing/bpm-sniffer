@@ -6,6 +6,8 @@ mod bpm;
 mod tempo;
 
 use std::{thread, time::Duration, sync::{Mutex, OnceLock}};
+use std::fs::{self, OpenOptions};
+use std::io::Write as IoWrite;
 use std::collections::VecDeque;
 
 use anyhow::Result;
@@ -46,6 +48,39 @@ static COLLECTED_LOGS: OnceLock<Mutex<Vec<BackendLog>>> = OnceLock::new();
 const EMIT_TEXT_LOGS: bool = true;
 // 可视化输出的下采样波形长度（与前端保持一致）
 const OUT_LEN: usize = 192;
+static LOG_FILE_PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
+
+fn append_log_line(line: &str) {
+    if let Some(p) = LOG_FILE_PATH.get() {
+        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(p) {
+            let _ = writeln!(f, "{}", line);
+        }
+    }
+}
+
+fn setup_logging(app: &tauri::AppHandle) {
+    // 放在应用数据目录下：AppData/Roaming/<identifier>/logs/app.log
+    if let Ok(mut dir) = app.path().app_data_dir() {
+        dir.push("logs");
+        let _ = fs::create_dir_all(&dir);
+        let mut file = dir.clone();
+        file.push("app.log");
+        let _ = LOG_FILE_PATH.set(file.clone());
+        let _ = OpenOptions::new().create(true).append(true).open(&file);
+        append_log_line("[BOOT] app starting");
+        // panic 落盘（使用 UNIX 毫秒时间戳，避免引入依赖）
+        std::panic::set_hook(Box::new(move |info| {
+            let ts_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u128)
+                .unwrap_or(0);
+            let msg = format!("[PANIC] ts={}ms {}", ts_ms, info);
+            if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&file) {
+                let _ = writeln!(f, "{}", msg);
+            }
+        }));
+    }
+}
 
 #[tauri::command]
 fn start_capture(app: AppHandle) -> Result<(), String> {
@@ -89,6 +124,14 @@ fn get_updater_endpoints(app: AppHandle) -> Vec<String> {
         }
     }
     out
+}
+
+#[tauri::command]
+fn get_log_dir(app: AppHandle) -> Result<String, String> {
+    let p = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let mut d = p.clone();
+    d.push("logs");
+    Ok(d.to_string_lossy().to_string())
 }
 
 // 不再做 0.5 步进四舍五入，交由前端格式化显示
@@ -669,6 +712,8 @@ fn main() {
             if let Some(win) = app.get_webview_window("main") { let _ = win.set_focus(); }
         }))
         .setup(|app| {
+            let handle = app.handle();
+            setup_logging(&handle);
             // 系统托盘与菜单（临时固定英文）
             let about = MenuItemBuilder::new("About").id("about").build(app)?;
             let quit = MenuItemBuilder::new("Quit").id("quit").build(app)?;
@@ -726,7 +771,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![start_capture, stop_capture, get_current_bpm, set_always_on_top, get_updater_endpoints])
+        .invoke_handler(tauri::generate_handler![start_capture, stop_capture, get_current_bpm, set_always_on_top, get_updater_endpoints, get_log_dir])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
