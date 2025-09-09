@@ -58,6 +58,37 @@ fn append_log_line(line: &str) {
     }
 }
 
+fn early_setup_logging() {
+    // 在没有 AppHandle 之前，先用 APPDATA 推导日志目录
+    #[cfg(target_os = "windows")]
+    let base = std::env::var("APPDATA").ok().map(std::path::PathBuf::from);
+    #[cfg(not(target_os = "windows"))]
+    let base = dirs::home_dir();
+
+    if let Some(mut dir) = base {
+        dir.push("com.renlu.bpm-sniffer");
+        dir.push("logs");
+        let _ = fs::create_dir_all(&dir);
+        let mut file = dir.clone();
+        file.push("app.pre.log");
+        if LOG_FILE_PATH.set(file.clone()).is_ok() {
+            let _ = OpenOptions::new().create(true).append(true).open(&file);
+            append_log_line("[BOOT-PRE] process starting before Tauri builder");
+        }
+        // 提前设置 panic 落盘
+        std::panic::set_hook(Box::new(move |info| {
+            let ts_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u128)
+                .unwrap_or(0);
+            let msg = format!("[PANIC-PRE] ts={}ms {}", ts_ms, info);
+            if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&file) {
+                let _ = writeln!(f, "{}", msg);
+            }
+        }));
+    }
+}
+
 fn setup_logging(app: &tauri::AppHandle) {
     // 放在应用数据目录下：AppData/Roaming/<identifier>/logs/app.log
     if let Ok(mut dir) = app.path().app_data_dir() {
@@ -698,6 +729,8 @@ fn run_capture(app: AppHandle) -> Result<()> {
 fn stop_capture() -> Result<(), String> { Ok(()) }
 
 fn main() {
+    // 超早期日志，捕捉初始化前的崩溃
+    early_setup_logging();
     // 尝试加载本地环境变量文件（用于本地开发/私有更新源覆盖）
     let _ = dotenvy::from_filename(".env.local");
     let _ = dotenvy::dotenv();
