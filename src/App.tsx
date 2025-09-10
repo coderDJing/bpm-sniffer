@@ -24,13 +24,7 @@ export default function App() {
   const [themeName, setThemeName] = useState<'dark' | 'light'>('dark')
   const [appVersion, setAppVersion] = useState<string>('')
   const [updateReady, setUpdateReady] = useState<boolean>(false)
-  // 更新调试面板相关状态（Ctrl+Shift+U）
-  const [showUpdateDebug, setShowUpdateDebug] = useState<boolean>(false)
-  const [updEndpoints, setUpdEndpoints] = useState<string[]>([])
-  const [updLogs, setUpdLogs] = useState<string[]>([])
-  const [updChecking, setUpdChecking] = useState<boolean>(false)
-  const updRef = useRef<any>(null) // 最新一次 check() 的 Update 对象（若可用）
-  const updPanelRef = useRef<HTMLDivElement | null>(null)
+  // （已移除前端调试面板与快捷键）
   const mqlCleanupRef = useRef<null | (() => void)>(null)
   // 高亮锁：当某个值在高置信度下被高亮后，如果之后收到同值但低置信度的数据，仍保持高亮，直到值发生变化
   const bpmRef = useRef<number | null>(null)
@@ -173,108 +167,19 @@ export default function App() {
     return () => { if (removeListener) removeListener() }
   }, [])
 
-  // 全局快捷键：Ctrl+Shift+U 切换“更新调试面板”
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      const isCtrlOrCmd = e.ctrlKey || e.metaKey
-      if (isCtrlOrCmd && e.shiftKey && (e.key === 'u' || e.key === 'U')) {
-        e.preventDefault()
-        setShowUpdateDebug(v => !v)
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  // （已移除：全局快捷键 Ctrl+Shift+U）
 
   // 打开调试面板时拉取一次当前生效端点
-  useEffect(() => {
-    if (!showUpdateDebug) return
-    ;(async () => {
-      try {
-        const eps = await invoke<string[]>('get_updater_endpoints')
-        setUpdEndpoints(Array.isArray(eps) ? eps : [])
-      } catch (e) {
-        setUpdEndpoints([])
-      }
-    })()
-  }, [showUpdateDebug])
+  // （已移除：调试面板拉取端点）
 
   // 追加一行日志（带时间）
-  function pushUpdLog(line: string) {
-    const ts = new Date()
-    const hh = String(ts.getHours()).padStart(2, '0')
-    const mm = String(ts.getMinutes()).padStart(2, '0')
-    const ss = String(ts.getSeconds()).padStart(2, '0')
-    const ms = String(ts.getMilliseconds()).padStart(3, '0')
-    setUpdLogs(prev => [...prev, `[${hh}:${mm}:${ss}.${ms}] ${line}`].slice(-400))
-  }
+  // （已移除：调试日志）
 
   // 诊断：刷新端点可达性 + 调用插件 check()
-  async function runUpdateDiagnostics() {
-    setUpdChecking(true)
-    setUpdLogs([])
-    updRef.current = null
-    try {
-      // 确保拿到最新端点
-      let eps: string[] = updEndpoints
-      try {
-        const v = await invoke<string[]>('get_updater_endpoints')
-        eps = Array.isArray(v) ? v : []
-        setUpdEndpoints(eps)
-      } catch {}
-      if (!eps.length) pushUpdLog('未读取到任何更新端点（可能未配置或被覆盖失败）')
-      // 逐个端点尝试 GET（HEAD 有些源不返回 CORS 头）
-      for (const url of eps) {
-        const probe = `${url}${url.includes('?') ? '&' : '?'}_=${Date.now()}`
-        try {
-          pushUpdLog(`探测端点: ${probe}`)
-          const resp = await fetch(probe, { method: 'GET', cache: 'no-store' as RequestCache })
-          pushUpdLog(`  状态: ${resp.status} ${resp.statusText}`)
-          // 简要校验 JSON 结构（不强制）
-          try {
-            const txt = await resp.text()
-            const okJson = /\{[\s\S]*?\}/.test(txt)
-            pushUpdLog(`  返回体: ${okJson ? '看起来像 JSON' : '非 JSON/空'}`)
-          } catch {}
-        } catch (e: any) {
-          pushUpdLog(`  请求失败: ${e?.message || String(e)}`)
-        }
-      }
-
-      // 调用插件 check()
-      try {
-        pushUpdLog('调用插件 check() ...')
-        const res = await check()
-        if (!res) {
-          pushUpdLog('check() 返回空（插件不可用或未配置）')
-        } else {
-          // res 结构随平台/版本可能不同，做宽松读取
-          const available = !!(res as any).available
-          const version = (res as any).version || (res as any).manifest?.version || ''
-          pushUpdLog(`check() 结果: available=${available}${version ? `, version=${version}` : ''}`)
-          updRef.current = res
-        }
-      } catch (e: any) {
-        pushUpdLog(`check() 抛错: ${e?.message || String(e)}`)
-      }
-    } finally {
-      setUpdChecking(false)
-    }
-  }
+  // （已移除：诊断函数）
 
   // 手动触发下载并安装（仅当上一轮 check() 返回 Update 对象）
-  async function doDownloadAndInstall() {
-    const u = updRef.current
-    if (!u) { pushUpdLog('没有可用的 Update 对象，请先执行检查'); return }
-    try {
-      pushUpdLog('开始下载并安装...')
-      await u.downloadAndInstall()
-      pushUpdLog('下载并安装完成：下次重启生效')
-      setUpdateReady(true)
-    } catch (e: any) {
-      pushUpdLog(`下载/安装失败: ${e?.message || String(e)}`)
-    }
-  }
+  // （已移除：手动下载安装）
 
   // 跨窗口主题同步：监听 localStorage 变化
   useEffect(() => {
@@ -295,15 +200,9 @@ export default function App() {
     return () => window.removeEventListener('hashchange', handler)
   }, [])
 
-  // 全局禁用右键、选择与拖拽（但允许在“更新调试面板”内选择/右键）
+  // 全局禁用右键、选择与拖拽
   useEffect(() => {
-    const allowInDebug = (e: Event) => {
-      const el = updPanelRef.current
-      const target = e.target as Node | null
-      return !!(el && target && el.contains(target))
-    }
     const prevent = (e: Event) => {
-      if (allowInDebug(e)) return
       e.preventDefault(); e.stopPropagation()
     }
     window.addEventListener('contextmenu', prevent, { capture: true })
@@ -534,41 +433,7 @@ export default function App() {
       </div>
       )}
 
-      {/* 更新调试面板（Ctrl+Shift+U） */}
-      {showUpdateDebug && (
-        <div ref={updPanelRef} style={{position:'fixed',left:12,bottom:12,zIndex:9998,background:theme.panelBg,border:'1px solid #1d2a3a',borderRadius:8,padding:10,width:Math.min(520, Math.max(320, window.innerWidth-24)),maxHeight:Math.min(420, window.innerHeight-24),display:'flex',flexDirection:'column',gap:8,boxShadow:'0 6px 18px rgba(0,0,0,0.35)',userSelect:'text',WebkitUserSelect:'text',msUserSelect:'text'}}>
-          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
-            <div style={{fontWeight:700,color:'#eb1a50'}}>更新调试（Ctrl+Shift+U）</div>
-            <div style={{display:'flex',gap:6}}>
-              <button onClick={() => setShowUpdateDebug(false)} style={{background:'transparent',border:'1px solid #3a0b17',color:theme.textSecondary,borderRadius:6,padding:'4px 8px'}}>关闭</button>
-            </div>
-          </div>
-          <div style={{display:'flex',flexDirection:'column',gap:6}}>
-            <div style={{fontSize:12,color:theme.subduedText}}>端点（构建/运行时实际生效）：</div>
-            <div style={{display:'flex',flexDirection:'column',gap:4,userSelect:'text',WebkitUserSelect:'text',msUserSelect:'text'}}>
-              {updEndpoints.length ? updEndpoints.map((u, i) => (
-                <div key={i} style={{fontSize:12,color:theme.textPrimary,wordBreak:'break-all',userSelect:'text',WebkitUserSelect:'text',msUserSelect:'text'}}>{i+1}. {u}</div>
-              )) : (
-                <div style={{fontSize:12,color:theme.textSecondary}}>（无）</div>
-              )}
-            </div>
-          </div>
-          <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-            <button disabled={updChecking} onClick={runUpdateDiagnostics} style={{fontSize:12,padding:'6px 10px'}}>{updChecking ? '检查中…' : '检查更新'}</button>
-            <button disabled={!updRef.current || updChecking} onClick={doDownloadAndInstall} style={{fontSize:12,padding:'6px 10px',opacity: (!updRef.current || updChecking) ? 0.6 : 1}}>下载并安装</button>
-            <button disabled={updChecking} onClick={async () => { try { const eps = await invoke<string[]>('get_updater_endpoints'); setUpdEndpoints(Array.isArray(eps) ? eps : []); pushUpdLog('已刷新端点'); } catch { pushUpdLog('刷新端点失败'); } }} style={{fontSize:12,padding:'6px 10px'}}>刷新端点</button>
-            <button disabled={updChecking} onClick={() => setUpdLogs([])} style={{fontSize:12,padding:'6px 10px'}}>清空日志</button>
-            <button disabled={updChecking} onClick={async () => { try { const dir = await invoke<string>('get_log_dir'); await (window as any).__TAURI__?.shell?.open?.(dir); pushUpdLog(`已打开日志目录：${dir}`)} catch (e:any) { pushUpdLog(`打开日志目录失败: ${e?.message||String(e)}`) } }} style={{fontSize:12,padding:'6px 10px'}}>打开日志目录</button>
-          </div>
-          <div style={{flex:'1 1 auto',minHeight:80,overflow:'auto',background:'#0f070b',border:'1px solid #1d2a3a',borderRadius:6,padding:'6px 8px',userSelect:'text',WebkitUserSelect:'text',msUserSelect:'text'}}>
-            {updLogs.length ? updLogs.map((l, i) => (
-              <div key={i} style={{fontFamily:'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', fontSize:11, whiteSpace:'pre-wrap', color:'#d2d8df',userSelect:'text',WebkitUserSelect:'text',msUserSelect:'text'}}>{l}</div>
-            )) : (
-              <div style={{fontSize:12,color:theme.subduedText}}>点击“检查更新”开始诊断。将逐个探测端点并调用插件 check()。</div>
-            )}
-          </div>
-        </div>
-      )}
+      {/* （已移除更新调试面板） */}
     </main>
   )
 }
