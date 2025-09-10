@@ -20,6 +20,11 @@
 
 > 仅支持 Windows（Win10 及以上，x64），macOS 由于系统底层限制不计划支持。
 
+<p align="center">
+  <img src="darkScreenshot.png" alt="Dark mode screenshot" width="320" />
+  <img src="lightScreenshot.png" alt="Light mode screenshot" width="320" />
+</p>
+
 ### 这是什么
 
 - 从系统正在播放的音频中，自动检测并显示 BPM。
