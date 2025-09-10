@@ -22,6 +22,7 @@ use tauri::tray::TrayIconBuilder;
 use tauri::Url;
 use tauri::webview::WebviewWindowBuilder;
 use tauri::WebviewUrl;
+use tauri::dpi::{PhysicalSize, Size};
 
 use audio::AudioService;
 use tempo::{make_backend, TempoBackend};
@@ -822,6 +823,25 @@ fn main() {
             if let Some(ic) = icon { tray_builder = tray_builder.icon(ic); }
             
             tray_builder.build(app)?;
+
+            // DPI 感知：按显示器缩放调整主窗口逻辑尺寸与边界，避免高缩放下窗口过小
+            if let Some(win) = app.get_webview_window("main") {
+                if let Ok(scale) = win.scale_factor() {
+                    let s = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+                    let base_w = 390.0f64; let base_h = 390.0f64; // 期望的逻辑尺寸
+                    let min_w = 220.0f64; let min_h = 120.0f64;   // 期望的最小逻辑尺寸
+                    let max_w = 390.0f64; let max_h = 390.0f64;   // 期望的最大逻辑尺寸
+                    let pw = (base_w * s).round() as u32;
+                    let ph = (base_h * s).round() as u32;
+                    let pminw = (min_w * s).round() as u32;
+                    let pminh = (min_h * s).round() as u32;
+                    let pmaxw = (max_w * s).round() as u32;
+                    let pmaxh = (max_h * s).round() as u32;
+                    let _ = win.set_min_size(Some(Size::Physical(PhysicalSize::new(pminw, pminh))));
+                    let _ = win.set_max_size(Some(Size::Physical(PhysicalSize::new(pmaxw, pmaxh))));
+                    let _ = win.set_size(Size::Physical(PhysicalSize::new(pw, ph)));
+                }
+            }
 
             // 开发模式下显式导航至 Vite 开发服务器，避免资源协议映射异常
             #[cfg(debug_assertions)]
