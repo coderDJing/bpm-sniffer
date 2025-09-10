@@ -22,7 +22,7 @@ use tauri::tray::TrayIconBuilder;
 use tauri::Url;
 use tauri::webview::WebviewWindowBuilder;
 use tauri::WebviewUrl;
-use tauri::dpi::{PhysicalSize, Size};
+use tauri::{LogicalSize, Size};
 
 use audio::AudioService;
 use tempo::{make_backend, TempoBackend};
@@ -824,22 +824,16 @@ fn main() {
             
             tray_builder.build(app)?;
 
-            // DPI 感知：按显示器缩放调整主窗口逻辑尺寸与边界，避免高缩放下窗口过小
+            // DPI 感知：使用逻辑尺寸设置窗口初始/最小尺寸，允许用户自由放大
             if let Some(win) = app.get_webview_window("main") {
                 if let Ok(scale) = win.scale_factor() {
-                    let s = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
-                    let base_w = 390.0f64; let base_h = 390.0f64; // 期望的逻辑尺寸
-                    let min_w = 220.0f64; let min_h = 120.0f64;   // 期望的最小逻辑尺寸
-                    let max_w = 390.0f64; let max_h = 390.0f64;   // 期望的最大逻辑尺寸
-                    let pw = (base_w * s).round() as u32;
-                    let ph = (base_h * s).round() as u32;
-                    let pminw = (min_w * s).round() as u32;
-                    let pminh = (min_h * s).round() as u32;
-                    let pmaxw = (max_w * s).round() as u32;
-                    let pmaxh = (max_h * s).round() as u32;
-                    let _ = win.set_min_size(Some(Size::Physical(PhysicalSize::new(pminw, pminh))));
-                    let _ = win.set_max_size(Some(Size::Physical(PhysicalSize::new(pmaxw, pmaxh))));
-                    let _ = win.set_size(Size::Physical(PhysicalSize::new(pw, ph)));
+                    let _ = scale; // 仅保留查询，逻辑尺寸无需手动乘缩放
+                    let base_w = 390.0f64; let base_h = 390.0f64; // 初始逻辑尺寸
+                    let min_w = 220.0f64; let min_h = 120.0f64;   // 最小逻辑尺寸
+                    let max_w = 560.0f64; let max_h = 560.0f64;   // 最大逻辑尺寸（限制用户拉大）
+                    let _ = win.set_min_size(Some(Size::Logical(LogicalSize::new(min_w, min_h))));
+                    let _ = win.set_max_size(Some(Size::Logical(LogicalSize::new(max_w, max_h))));
+                    let _ = win.set_size(Size::Logical(LogicalSize::new(base_w, base_h)));
                 }
             }
 
