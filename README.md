@@ -12,79 +12,79 @@
   <a href="/readme/README_CN.md">简体中文</a>
  </p>
 
-轻量本地节拍（BPM）实时探测器。
-打开任意播放器或网页播放音乐，即可自动实时显示当前歌曲的 BPM；
-无需虚拟声卡，开箱即用。
+Lightweight local real-time BPM (beats per minute) detector.
+Play music in any player or web page, and it will automatically display the current song's BPM in real time.
+No virtual sound card required — works out of the box.
 
-支持中英文界面（简体中文 / English），自动跟随系统语言。
+Supports bilingual UI (Simplified Chinese / English). The language follows your system locale.
 
-> 仅支持 Windows（Win10 及以上，x64），macOS 由于系统底层限制不计划支持。
+> Windows only (Win10 and above, x64). macOS is not planned due to system-level limitations.
 
 <p align="center">
   <img src="./screenshot/darkScreenshot.png" alt="Dark mode screenshot" width="320" />
   <img src="./screenshot/lightScreenshot.png" alt="Light mode screenshot" width="320" />
 </p>
 
-### 这是什么
+### What is this
 
-- 从系统正在播放的音频中，自动检测并显示 BPM。
-- 小巧悬浮窗，支持窗口置顶、深浅色主题与简易可视化。
-- 全程本地处理，不采集也不上传任何音频。
+- Automatically detects and displays the BPM from audio currently playing on your system.
+- Compact floating window with always-on-top, light/dark themes, and simple visualizations.
+- Entirely local processing. No audio is collected or uploaded.
 
-### 主要功能
+### Key Features
 
-- **即开即用**：无需额外驱动/虚拟声卡。
-- **更稳的数字**：针对切歌与弱节奏做了稳定化与抗抖动处理。
-- **可视化**：点击波形面板可在「波形/柱状/瀑布」三种模式间切换。
-- **置顶与主题**：右上角图钉可置顶窗口；可切换明/暗主题。
-- **自动更新（可选）**：有新版本会静默下载，重启后生效。
-- **中英文界面**：自动跟随系统语言（简体中文 / English）。
+- **Ready to use**: No extra drivers or virtual sound card needed.
+- **Stable readings**: Stabilization and anti-jitter for track changes and weak beats.
+- **Visualizations**: Click on the waveform panel to switch among Waveform / Bar / Spectrogram.
+- **Pin & theme**: Use the pushpin to toggle always-on-top; switch between light and dark themes.
+- **Auto updates (optional)**: New versions download silently and take effect after restart.
+- **Bilingual UI**: Follows system language (Simplified Chinese / English).
 
-### 下载与安装
+### Download & Install
 
-- 前往发布页的 latest 下载 Windows 安装包（NSIS）：[Releases · coderDJing/bpm-sniffer](https://github.com/coderDJing/bpm-sniffer/releases/latest)。
+- Go to the latest release page and download the Windows installer (NSIS): [Releases · coderDJing/bpm-sniffer](https://github.com/coderDJing/bpm-sniffer/releases/latest).
 
-### 如何使用
+### How to Use
 
-1. 播放你喜欢的音乐（任何播放器均可）。
-2. 打开 BPM Sniffer，数字会自动跟随当前曲目。
-3. 常用操作：
-   - 右上角图钉：窗口置顶/取消置顶。
-   - 右上角太阳/月亮：切换明/暗主题。
-   - 点击波形：切换可视化模式（波形/柱状/瀑布）。
-   - 右上角刷新：一键重置，快速重新锁定新节拍。
+1. Play your music (any player works).
+2. Open BPM Sniffer. The BPM will automatically follow the current track.
+3. Common actions:
+   - Pushpin (top-right): Toggle always-on-top.
+   - Sun/Moon (top-right): Switch light/dark theme.
+   - Click waveform: Switch visualization mode (Waveform / Bar / Spectrogram).
+   - Refresh (top-right): Reset quickly to re-lock onto a new beat.
 
-### 常见问题
+### FAQ
 
-- 看不到数值/总是 0？请确认系统正在播放声音、播放器音量不为 0，或点击右上角刷新后再试。
-- 为什么数字偶尔会小幅跳动？在切歌或过渡段属于正常现象，应用会很快稳定。
-- 需要麦克风权限吗？不需要。应用读取系统回环音频，不使用麦克风。
- - 能切换界面语言吗？当前自动跟随系统语言（简体中文 / English）。
+- Not seeing values / always 0? Make sure your system is playing audio, the player volume is not muted, or click Refresh (top-right) and try again.
+- Why does the number wiggle slightly sometimes? This is normal during track changes or transitions; it will stabilize shortly.
+- Does it require microphone permission? No. The app reads the system loopback audio and does not use the microphone.
+- Can I switch the UI language? It currently follows the system language (Simplified Chinese / English).
 
-### 平台与隐私
+### Platform & Privacy
 
-- 仅支持 Windows（Win10 及以上，x64），macOS 由于系统限制不计划支持。
-- 所有处理在本地完成，不上传音频数据。
+- Windows only (Win10 and above, x64). macOS is not planned due to system limitations.
+- All processing is local. No audio data is uploaded.
 
 ---
 
-### 给开发者
+### For Developers
 
-开发与调试：
+Development & Debugging:
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-打包：
+Build:
 
 ```bash
 pnpm build
 ```
 
-- 安装包输出：`src-tauri/target/release/bundle/nsis/`
+- Installer output: `src-tauri/target/release/bundle/nsis/`
 
-算法与实现：详见 [算法原理与流程](doc/算法原理与流程.md)。
+Algorithms & Implementation: see [Algorithm principles & flow](doc/算法原理与流程.md).
 
-许可证：MIT（见 `LICENSE`）。
+License: MIT (see `LICENSE`).
