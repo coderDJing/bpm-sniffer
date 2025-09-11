@@ -263,11 +263,11 @@ export default function App() {
       const h = window.innerHeight
       const w = window.innerWidth
       // 粗略阈值：根据当前组件布局估算
-      setHideRms(h < 380)
-      setHideViz(h < 360)
-      setHideTitle(h < 225)
-      setHideMeta(h < 175)
-      setHideActions(w < 310)
+      setHideRms(h < 350)
+      setHideViz(h < 320)
+      setHideTitle(h < 180)
+      setHideMeta(h < 160)
+      setHideActions(w < 380)
       // 强制一次轻量刷新，确保宽度自适应在静态画面时也更新
       setSizeTick((t) => (t + 1) % 1000000)
     }
@@ -289,24 +289,28 @@ export default function App() {
   }
 
   return (
-    <main style={{height:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:16,background:theme.background,color:theme.textPrimary,overflow:'hidden'}}>
+    <main style={{height:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent: hideViz ? 'center' : 'flex-start',gap:16,background:theme.background,color:theme.textPrimary,overflow:'hidden'}}>
       {updateReady && (
         <div style={{position:'fixed',left:'50%',transform:'translateX(-50%)',bottom:16,background:theme.panelBg,border:'1px solid #1d2a3a',borderRadius:8,padding:'10px 12px',display:'flex',alignItems:'center',gap:10,zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.35)',minWidth:'min(360px, calc(100vw - 32px))',maxWidth:'calc(100vw - 32px)',flexWrap:'nowrap',justifyContent:'flex-start'}}>
           <span style={{fontSize:12,color:theme.textPrimary,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',flex:'1 1 auto',minWidth:0}}>{t('update_ready')}</span>
           <button onClick={() => setUpdateReady(false)} style={{fontSize:12,background:'transparent',border:'1px solid #3a0b17',color:theme.textSecondary,borderRadius:6,cursor:'pointer',padding:'4px 8px',whiteSpace:'nowrap',display:'inline-flex',alignItems:'center',justifyContent:'center'}}>{t('close')}</button>
         </div>
       )}
-      {!hideTitle && <h1 style={{margin:0,color:'#eb1a50',fontSize:18}}>{t('app_title')}</h1>}
-      <div style={{fontSize:96,fontWeight:700,letterSpacing:2,color:bpmColor}}>{bpm == null ? 0 : Math.round(bpm)}</div>
-      {!hideMeta && (
-        <div style={{fontSize:14,color:theme.textSecondary}}>
-          {label} · {t('conf_label')}<span style={{color: confColor}}>{confLabel}</span>
-        </div>
-      )}
+      <div style={{flex:'1 1 auto', width:'100%', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:0, minHeight: hideViz ? '100vh' : undefined}}>
+        {!hideTitle && <h1 style={{margin:0,color:'#eb1a50',fontSize:18}}>{t('app_title')}</h1>}
+        <div style={{fontSize:96,fontWeight:700,letterSpacing:2,color:bpmColor,height:'100px',lineHeight:'100px'}}>{bpm == null ? 0 : Math.round(bpm)}</div>
+        {!hideMeta && (
+          <div style={{fontSize:14,color:theme.textSecondary,paddingTop:'10px'}}>
+            {label} · {t('conf_label')}<span style={{color: confColor}}>{confLabel}</span>
+          </div>
+        )}
+      </div>
 
       {/* 简易波形可视化 */}
       {!hideViz && (
-        <VizPanel theme={theme} hideRms={hideRms} viz={viz} mode={vizMode} onToggle={() => setVizMode(m => m==='wave' ? 'bars' : (m==='bars' ? 'waterfall' : 'wave'))} />
+        <div style={{marginTop:'auto', marginBottom:7}}>
+          <VizPanel theme={theme} hideRms={hideRms} viz={viz} mode={vizMode} onToggle={() => setVizMode(m => m==='wave' ? 'bars' : (m==='bars' ? 'waterfall' : 'wave'))} />
+        </div>
       )}
 
       {!hideActions && (
@@ -480,7 +484,11 @@ function AboutWindow({ themeName, setThemeName, appVersion }: { themeName: 'dark
 }
 
 function VizPanel({ theme, hideRms, viz, mode, onToggle }: { theme: any, hideRms: boolean, viz: AudioViz | null, mode: 'wave'|'bars'|'waterfall', onToggle: () => void }) {
-  const h = 120
+  // 自适应高度：在默认窗口高度（≈390）时保持 120px，随着窗口拉高按比例增大，设上下限
+  const baseWindowH = 390
+  const baseVizH = 120
+  const vh = typeof window !== 'undefined' ? window.innerHeight : baseWindowH
+  const h = Math.max(100, Math.min(300, Math.floor(baseVizH + Math.max(0, vh - baseWindowH) * 0.7)))
   const w = Math.max(180, Math.floor(window.innerWidth - 10))
   const bg = theme.panelBg
   const grid = theme.grid
@@ -660,18 +668,17 @@ function VizPanel({ theme, hideRms, viz, mode, onToggle }: { theme: any, hideRms
   }
 
   const barLen = Math.round(rmsSmoothedRef.current * (w - 60))
-
   return (
     <div style={{width:w, display:'flex', flexDirection:'column', gap:6, padding:'0 5px'}}>
       <svg width={w-10} height={h} style={{background:bg, border:'1px solid #1d2a3a', borderRadius:6, cursor:'pointer'}} onClick={onToggle}>
         {mode === 'wave' ? renderWave() : mode === 'bars' ? renderBars() : renderWaterfall()}
       </svg>
       {!hideRms && (
-        <div title={t('rms_tooltip')} style={{display:'flex', alignItems:'center', gap:8}}>
+        <div title={t('rms_tooltip')} style={{display:'flex', alignItems:'center', gap:8, height:14}}>
           <div style={{width:Math.max(60, w-70), height:8, background:'#3a0b17', borderRadius:4, overflow:'hidden'}}>
             <div style={{width:barLen, height:'100%', background:accent, transition:'width 120ms'}} />
           </div>
-          <span style={{fontSize:12, color:'#6b829e'}}>
+          <span style={{fontSize:12, lineHeight:'14px', color:'#6b829e'}}>
             RMS {Math.round(rmsSmoothedRef.current*100)}%
           </span>
         </div>
