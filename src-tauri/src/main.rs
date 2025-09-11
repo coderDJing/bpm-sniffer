@@ -53,6 +53,22 @@ const EMIT_TEXT_LOGS: bool = true;
 const OUT_LEN: usize = 192;
 static LOG_FILE_PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
 
+// 分析支路响度标准化配置（简易 RMS 方案）
+const NORM_ENABLE: bool = true;         // 标准化默认开启，仅作用于分析支路（临时关闭以便测试原始下限）
+const NORM_TARGET_DBFS: f32 = -18.0;     // 目标 RMS 电平（dBFS）
+const NORM_MAX_GAIN_DB: f32 = 36.0;      // 最大放大（+36 dB）
+const NORM_MIN_GAIN_DB: f32 = -12.0;     // 最小衰减（-12 dB）
+const NORM_SOFT_K: f32 = 1.2;            // 软限幅强度（tanh 系数，越小越温和）
+// “电平过低”占位提示的判据与节流
+const NORM_ATTACK: f32 = 0.25;                 // 增益上升平滑（攻）
+const NORM_RELEASE: f32 = 0.08;                // 增益下降平滑（释）
+// 节奏频带侧链：仅用于驱动增益计算（不改变可视化/回放）
+const SC_HP_HZ: f32 = 60.0;                    // 侧链高通频率
+const SC_LP_HZ: f32 = 180.0;                   // 侧链低通频率
+const NORM_MAX_GAIN_DB_EXT: f32 = 42.0;        // 节奏占比良好时允许的更高最大增益
+const RHYTHM_RATIO_THR: f32 = 0.25;            // 节奏频带 RMS / 全带 RMS 的阈值
+const MAX_GAIN_DB_WHEN_LOW_RATIO: f32 = 18.0;  // 占比偏低时的最大增益上限
+
 fn append_log_line(line: &str) {
     if let Some(p) = LOG_FILE_PATH.get() {
         if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(p) {
@@ -259,6 +275,15 @@ fn run_capture(app: AppHandle) -> Result<()> {
     let mut recent_ints_cand: VecDeque<(i32, u64)> = VecDeque::with_capacity(32);
     // 请求在下一次整数锁阶段清空锁
     let mut force_clear_lock: bool = false;
+    // 标准化运行时状态
+    let mut norm_gain_db_smooth: f32 = 0.0; // 平滑后的 dB 增益
+    // 已移除低电平提示：不再跟踪连续低电平
+    // 侧链滤波状态（简单一阶高通+低通）
+    let mut sc_hp_alpha: f32 = 0.0;
+    let mut sc_lp_alpha: f32 = 0.0;
+    let mut sc_hp_lp_prev: f32 = 0.0;
+    let mut sc_lp_prev: f32 = 0.0;
+
     loop {
         // 软重置：收到请求后清空内部状态与窗口，向前端清零
         if let Some(flag) = RESET_REQUESTED.get() {
@@ -281,6 +306,11 @@ fn run_capture(app: AppHandle) -> Result<()> {
                     target_len = sr_usize * 2;
                     hop_len = sr_usize / 2;
                     backend = make_backend(new_sr);
+                    // 更新侧链滤波系数
+                    let fs = new_sr as f32;
+                    sc_hp_alpha = (-2.0 * std::f32::consts::PI * SC_HP_HZ / fs).exp();
+                    sc_lp_alpha = (-2.0 * std::f32::consts::PI * SC_LP_HZ / fs).exp();
+                    sc_hp_lp_prev = 0.0; sc_lp_prev = 0.0;
                     window.clear();
                     disp_hist.clear(); ema_disp = None; prev_rms_db = None; anchor_bpm = None; stable_vals.clear();
                     hi_cnt = 0; lo_cnt = 0; tracking = false; ever_locked = false; none_cnt = 0; dev_from_lock_cnt = 0; force_clear_lock = true;
@@ -362,9 +392,16 @@ fn run_capture(app: AppHandle) -> Result<()> {
                 }
             }
         }
-        // 取窗口前 2s 作为当前帧
+        // 取窗口前 2s 作为当前帧（分析原始帧）
         let mut frames: Vec<f32> = Vec::with_capacity(target_len);
         for i in 0..target_len { if let Some(&v) = window.get(i) { frames.push(v); } }
+        // 初始化侧链滤波系数（首次）
+        if sc_hp_alpha == 0.0 || sc_lp_alpha == 0.0 {
+            let fs = svc.sample_rate() as f32;
+            sc_hp_alpha = (-2.0 * std::f32::consts::PI * SC_HP_HZ / fs).exp();
+            sc_lp_alpha = (-2.0 * std::f32::consts::PI * SC_LP_HZ / fs).exp();
+            sc_hp_lp_prev = 0.0; sc_lp_prev = 0.0;
+        }
 
         let level = level_from_frames(&frames);
         // 计算当前帧能量 dB（用于能量跳变检测）
@@ -379,6 +416,8 @@ fn run_capture(app: AppHandle) -> Result<()> {
         if is_silent {
             // 无声：直接显示 0 BPM，清空锁定状态
             tracking = false; ever_locked = false; hi_cnt = 0; lo_cnt = 0;
+            // 归零标准化状态
+            norm_gain_db_smooth = 0.0;
             silent_win_cnt = silent_win_cnt.saturating_add(1);
             if let Some(cell) = CURRENT_BPM.get() {
                 if let Ok(mut guard) = cell.lock() {
@@ -395,7 +434,44 @@ fn run_capture(app: AppHandle) -> Result<()> {
         }
         silent_win_cnt = 0;
 
-        if let Some(raw) = backend.process(&frames) {
+        // 分析支路：在送入后端前做 RMS 标准化与软限幅（不影响可视化）
+        let mut frames_for_analysis: Vec<f32> = frames.clone();
+        if NORM_ENABLE {
+            // 估计帧 RMS 与目标增益
+            let mut sumsq = 0.0f32; for &s in &frames_for_analysis { sumsq += s * s; }
+            let rms = (sumsq / frames_for_analysis.len() as f32).sqrt().max(1e-9);
+            // 节奏频带侧链 RMS
+            let mut sc_sumsq = 0.0f32;
+            for &s in &frames_for_analysis {
+                let hp_lp = sc_hp_alpha * sc_hp_lp_prev + (1.0 - sc_hp_alpha) * s;
+                let hp = s - hp_lp; sc_hp_lp_prev = hp_lp;
+                let lp = sc_lp_alpha * sc_lp_prev + (1.0 - sc_lp_alpha) * hp; sc_lp_prev = lp;
+                sc_sumsq += lp * lp;
+            }
+            let sc_rms = (sc_sumsq / frames_for_analysis.len() as f32).sqrt().max(1e-9);
+            let rhythm_ratio = (sc_rms / rms.max(1e-9)).clamp(0.0, 1.0);
+            let cur_dbfs = 20.0 * rms.log10();
+            let mut need_gain_db = NORM_TARGET_DBFS - cur_dbfs;
+            // 动态最大增益：节奏占比较高允许更大增益
+            let dyn_max_gain = if rhythm_ratio >= RHYTHM_RATIO_THR { NORM_MAX_GAIN_DB.max(NORM_MAX_GAIN_DB_EXT) } else { NORM_MAX_GAIN_DB.min(MAX_GAIN_DB_WHEN_LOW_RATIO) };
+            if need_gain_db > dyn_max_gain { need_gain_db = dyn_max_gain; }
+            if need_gain_db < NORM_MIN_GAIN_DB { need_gain_db = NORM_MIN_GAIN_DB; }
+            // 平滑（不同攻/释）
+            let a = if need_gain_db > norm_gain_db_smooth { NORM_ATTACK } else { NORM_RELEASE };
+            norm_gain_db_smooth = norm_gain_db_smooth * (1.0 - a) + need_gain_db * a;
+            let lin_gain = 10f32.powf(norm_gain_db_smooth / 20.0);
+            // 应用增益
+            if lin_gain != 1.0 {
+                for x in &mut frames_for_analysis { *x *= lin_gain; }
+            }
+            // 软限幅（tanh），温和保护峰值
+            if NORM_SOFT_K > 0.0 {
+                for x in &mut frames_for_analysis { let y = (NORM_SOFT_K * *x).tanh(); *x = y / NORM_SOFT_K; }
+            }
+            // 低电平提示逻辑已删除
+        }
+
+        if let Some(raw) = backend.process(&frames_for_analysis) {
             none_cnt = 0;
             // 能量跳变触发切歌快速重锁
             if let Some(pdb) = prev_rms_db { if (cur_db - pdb).abs() >= 6.0 { fast_relock_deadline = Some(now_ms().saturating_add(2000)); anchor_bpm = None; stable_vals.clear(); } }
