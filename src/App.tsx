@@ -101,8 +101,7 @@ export default function App() {
           }
         } catch {}
 
-        // 通知后端日志语言（中文/英文）
-        try { await invoke('set_log_lang', { is_zh: getCurrentLang() === 'zh-CN' }) } catch {}
+        // 仅靠后端初始化语言；前端不再覆盖后端语言
         await invoke('start_capture')
         // 获取应用版本号
         try { const v = await getVersion(); setAppVersion(v) } catch {}

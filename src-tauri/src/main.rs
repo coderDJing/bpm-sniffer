@@ -87,6 +87,8 @@ fn emit_friendly(app: &AppHandle, zh: impl Into<String>, en: impl Into<String>) 
     }
 }
 
+// 运行时不再刷新托盘菜单；仅在初始化时按环境判定构建
+
 fn early_setup_logging() {
     // 在没有 AppHandle 之前，先用 APPDATA 推导日志目录
     #[cfg(target_os = "windows")]
@@ -156,6 +158,11 @@ fn start_capture(app: AppHandle) -> Result<(), String> {
 fn set_log_lang(is_zh: bool) -> Result<(), String> {
     set_log_lang_zh(is_zh);
     Ok(())
+}
+
+#[tauri::command]
+fn get_log_lang() -> bool {
+    is_log_zh()
 }
 
 
@@ -998,7 +1005,7 @@ fn main() {
                 });
             if let Some(ic) = icon { tray_builder = tray_builder.icon(ic); }
             
-            tray_builder.build(app)?;
+            let _ = tray_builder.build(app)?;
 
             // DPI 感知：使用逻辑尺寸设置窗口初始/最小尺寸，允许用户自由放大
             if let Some(win) = app.get_webview_window("main") {
@@ -1032,7 +1039,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![start_capture, stop_capture, get_current_bpm, set_always_on_top, get_updater_endpoints, get_log_dir, reset_backend, set_log_lang])
+        .invoke_handler(tauri::generate_handler![start_capture, stop_capture, get_current_bpm, set_always_on_top, get_updater_endpoints, get_log_dir, reset_backend, set_log_lang, get_log_lang])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
