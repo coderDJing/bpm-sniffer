@@ -8,6 +8,8 @@ import thumbtack from './assets/thumbtack.png'
 import sun from './assets/sun.png'
 import moon from './assets/moon.png'
 import refresh from './assets/refresh.png'
+import fullScreenBlack from './assets/fullScreenBlack.png'
+import fullScreenWhite from './assets/fullScreenWhite.png'
 // @ts-ignore: optional plugin at runtime
 import { check } from '@tauri-apps/plugin-updater'
 import { getVersion } from '@tauri-apps/api/app'
@@ -309,7 +311,7 @@ export default function App() {
       {/* 简易波形可视化 */}
       {!hideViz && (
         <div style={{marginTop:'auto', marginBottom:7}}>
-          <VizPanel theme={theme} hideRms={hideRms} viz={viz} mode={vizMode} onToggle={() => setVizMode(m => m==='wave' ? 'bars' : (m==='bars' ? 'waterfall' : 'wave'))} />
+          <VizPanel theme={theme} hideRms={hideRms} viz={viz} mode={vizMode} onToggle={() => setVizMode(m => m==='wave' ? 'bars' : (m==='bars' ? 'waterfall' : 'wave'))} themeName={themeName} />
         </div>
       )}
 
@@ -569,7 +571,7 @@ function CopyItem({ text, label }: { text: string, label: string }) {
   )
 }
 
-function VizPanel({ theme, hideRms, viz, mode, onToggle }: { theme: any, hideRms: boolean, viz: AudioViz | null, mode: 'wave'|'bars'|'waterfall', onToggle: () => void }) {
+function VizPanel({ theme, hideRms, viz, mode, onToggle, themeName }: { theme: any, hideRms: boolean, viz: AudioViz | null, mode: 'wave'|'bars'|'waterfall', onToggle: () => void, themeName: 'dark'|'light' }) {
   // 自适应高度：在默认窗口高度（≈390）时保持 120px，随着窗口拉高按比例增大，设上下限
   const baseWindowH = 390
   const baseVizH = 120
@@ -708,19 +710,87 @@ function VizPanel({ theme, hideRms, viz, mode, onToggle }: { theme: any, hideRms
     }
   }
   const barLen = Math.round(rmsSmoothedRef.current * (w - 60))
+  // 全屏图标显隐与全屏控制
+  const containerRef = React.useRef<HTMLDivElement | null>(null)
+  const [hovered, setHovered] = React.useState(false)
+  const [isFullscreen, setIsFullscreen] = React.useState(false)
+  React.useEffect(() => {
+    function onFsChange() {
+      setIsFullscreen(!!document.fullscreenElement)
+    }
+    document.addEventListener('fullscreenchange', onFsChange)
+    return () => document.removeEventListener('fullscreenchange', onFsChange)
+  }, [])
+  async function enterFullscreen(e?: React.MouseEvent) {
+    if (e) { e.stopPropagation(); e.preventDefault() }
+    const el = containerRef.current
+    if (!el) return
+    try {
+      if (el.requestFullscreen) await el.requestFullscreen()
+    } catch {}
+  }
+  const fsIcon = themeName === 'dark' ? fullScreenWhite : fullScreenBlack
+
+  // 基于全屏状态决定可视化高度
+  const fullH = typeof window !== 'undefined'
+    ? Math.max(window.innerHeight || 0, (window.screen && (window.screen as any).height) || 0, document.documentElement?.clientHeight || 0)
+    : baseWindowH
+  const effectiveH = isFullscreen
+    ? Math.max(100, Math.floor(fullH - (hideRms ? 20 : 36)))
+    : h
+  // 全屏下为 Waterfall 重新计算 cell 与偏移，确保垂直适配
+  const targetContentH2 = Math.max(10, effectiveH - idealPaddingY * 2)
+  const cell2 = Math.max(2, Math.min(16, Math.floor((targetContentH2 - gap) / bands - gap)))
+  const visibleCols2 = Math.max(1, Math.floor((w - gap) / (cell2 + gap)))
+  const wfW2 = Math.min(w, visibleCols2 * (cell2 + gap) + gap)
+  const wfH2 = Math.min(effectiveH, bands * (cell2 + gap) + gap)
+  const extraY2 = Math.max(0, Math.floor((effectiveH - 2 * idealPaddingY - wfH2) / 2))
+  const wfOffsetYEffective = Math.max(0, idealPaddingY + extraY2)
+
   return (
-    <div style={{width:w, display:'flex', flexDirection:'column', gap:6, padding:'0 5px'}}>
-      <svg width={w-10} height={h} style={{background:bg, border:'1px solid #1d2a3a', borderRadius:6, cursor:'pointer'}} onClick={onToggle}>
+    <div
+      ref={containerRef}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{width:w, display:'flex', flexDirection:'column', gap:6, padding:'0 5px'}}
+    >
+      <div style={{position:'relative'}}>
+        <svg width={w-10} height={effectiveH} style={{background:bg, border:'1px solid #1d2a3a', borderRadius:6, cursor:'pointer', display:'block'}} onClick={onToggle}>
         {mode === 'wave' && (
-          <WaveViz width={w-10} height={h} samples={smoothSamples} gain={gain} gridColor={grid} lineColor={line} />
+          <WaveViz width={w-10} height={effectiveH} samples={smoothSamples} gain={gain} gridColor={grid} lineColor={line} />
         )}
         {mode === 'bars' && (
-          <BarsViz width={w-10} height={h} samples={smoothSamples} gain={gain} barColor={line} />
+          <BarsViz width={w-10} height={effectiveH} samples={smoothSamples} gain={gain} barColor={line} />
         )}
         {mode === 'waterfall' && (
-          <WaterfallViz width={w-10} height={h} bands={bands} gap={gap} cell={cell} history={histRef.current} heatColor={heatColor} overrideOffsetY={wfOffsetY} />
+          <WaterfallViz width={w-10} height={effectiveH} bands={bands} gap={gap} cell={cell2} history={histRef.current} heatColor={heatColor} overrideOffsetY={wfOffsetYEffective} />
         )}
-      </svg>
+        </svg>
+        {/* 悬浮全屏图标 */}
+        {!isFullscreen && (
+          <button
+            onClick={enterFullscreen}
+            title={tn('全屏','Fullscreen')}
+            style={{
+              position:'absolute',
+              right:8,
+              top:8,
+              width:26,
+              height:26,
+              padding:0,
+              margin:0,
+              border:'none',
+              background:'transparent',
+              cursor:'pointer',
+              opacity: hovered ? 1 : 0,
+              transform: hovered ? 'translateY(0) scale(1)' : 'translateY(-4px) scale(0.96)',
+              transition:'opacity 160ms ease, transform 160ms ease'
+            }}
+          >
+            <img src={fsIcon} alt={tn('全屏','Fullscreen')} width={26} height={26} draggable={false} />
+          </button>
+        )}
+      </div>
       {!hideRms && (
         <div title={t('rms_tooltip')} style={{display:'flex', alignItems:'center', gap:8, height:14}}>
           <div style={{width:Math.max(60, w-70), height:8, background:'#3a0b17', borderRadius:4, overflow:'hidden'}}>
