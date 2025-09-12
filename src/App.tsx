@@ -1,4 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
+import WaveViz from './component/WaveViz'
+import BarsViz from './component/BarsViz'
+import WaterfallViz from './component/WaterfallViz'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import thumbtack from './assets/thumbtack.png'
@@ -168,20 +171,6 @@ export default function App() {
 
     return () => { if (removeListener) removeListener() }
   }, [])
-
-  // （已移除：全局快捷键 Ctrl+Shift+U）
-
-  // 打开调试面板时拉取一次当前生效端点
-  // （已移除：调试面板拉取端点）
-
-  // 追加一行日志（带时间）
-  // （已移除：调试日志）
-
-  // 诊断：刷新端点可达性 + 调用插件 check()
-  // （已移除：诊断函数）
-
-  // 手动触发下载并安装（仅当上一轮 check() 返回 Update 对象）
-  // （已移除：手动下载安装）
 
   // 跨窗口主题同步：监听 localStorage 变化
   useEffect(() => {
@@ -651,54 +640,25 @@ function VizPanel({ theme, hideRms, viz, mode, onToggle }: { theme: any, hideRms
   let gain = 0.6 / base
   gain = Math.max(0.8, Math.min(2.2, gain))
 
-  function renderWave() {
-    const mid = Math.floor(h / 2)
-    const path = smoothSamples.map((v, i) => {
-      const x = Math.round((i / Math.max(1, samples.length - 1)) * (w - 1))
-      const y = mid - Math.round(Math.max(-1, Math.min(1, (v || 0) * gain)) * (h * 0.40))
-      return `${i === 0 ? 'M' : 'L'}${x},${y}`
-    }).join(' ')
-    return <>
-      <line x1="0" y1={mid} x2={w} y2={mid} stroke={grid} strokeWidth="1" />
-      {path && <path d={path} stroke={line} strokeWidth={1.5} fill="none" />}
-    </>
-  }
-
-  function renderBars() {
-    // 将 256 点折叠为 64 根柱，每根取局部绝对值均值
-    const bars = 64
-    const step = Math.max(1, Math.floor(smoothSamples.length / bars))
-    const elems: JSX.Element[] = []
-    const gap = 1
-    const barW = Math.max(2, Math.floor((w - (bars - 1) * gap) / bars))
-    const totalW = barW * bars + gap * (bars - 1)
-    const offsetX = Math.max(0, Math.floor((w - totalW) / 2))
-    for (let b = 0; b < bars; b++) {
-      const i0 = b * step
-      const i1 = Math.min(smoothSamples.length, i0 + step)
-      let acc = 0, cnt = 0
-      for (let i = i0; i < i1; i++) { acc += Math.abs(smoothSamples[i] || 0); cnt++ }
-      const v = cnt ? acc / cnt : 0
-      const vv = Math.min(1, v * gain)
-      const x = offsetX + b * (barW + gap)
-      const bh = Math.round(vv * (h - 4))
-      const y = h - 2 - bh
-      elems.push(<rect key={b} x={x} y={y} width={barW} height={bh} fill={line} opacity={0.85} />)
-    }
-    return <>{elems}</>
-  }
-
   // Waterfall：把每帧样本折叠成 bands 段能量（历史用 ref）
   const histRef = React.useRef<number[][]>([])
   const bands = 16
   const scrollMul = 6
-  const cellW = 4
   const gap = 1
-  const visibleCols = Math.max(1, Math.floor((w - gap) / (cellW + gap)))
-  const wfW = Math.min(w, visibleCols * (cellW + gap) + gap)
-  const wfH = Math.min(h, bands * (cellW + gap) + gap)
+  // 目标：在高度变化时保持与默认高度时一致的上下留白，同时自适应填充可用空间
+  const baseCell = 4
+  const baseH = baseVizH
+  const baseContentH = Math.min(baseH, bands * (baseCell + gap) + gap)
+  const idealPaddingY = Math.max(0, Math.floor((baseH - baseContentH) / 2))
+  const targetContentH = Math.max(10, h - idealPaddingY * 2)
+  const cell = Math.max(2, Math.min(16, Math.floor((targetContentH - gap) / bands - gap)))
+  const visibleCols = Math.max(1, Math.floor((w - gap) / (cell + gap)))
+  const wfW = Math.min(w, visibleCols * (cell + gap) + gap)
+  const wfH = Math.min(h, bands * (cell + gap) + gap)
   const wfOffsetX = Math.max(0, Math.floor((w - wfW) / 2))
-  const wfOffsetY = Math.max(0, Math.floor((h - wfH) / 2))
+  // 以默认上下留白 idealPaddingY 为基线，尽量把因取整产生的剩余高度对称分配到上下
+  const extraY = Math.max(0, Math.floor((h - 2 * idealPaddingY - wfH) / 2))
+  const wfOffsetY = Math.max(0, idealPaddingY + extraY)
   const maxHistory = 600
   // 将一帧样本折叠为 bands 段能量
   const frameBands = React.useMemo(() => {
@@ -747,28 +707,19 @@ function VizPanel({ theme, hideRms, viz, mode, onToggle }: { theme: any, hideRms
       return `rgb(${r},${g},${b})`
     }
   }
-  function renderWaterfall() {
-    const cols = Math.min(histRef.current.length, visibleCols)
-    const startX = wfOffsetX + (wfW - gap - cols * (cellW + gap))
-    const elems: JSX.Element[] = []
-    for (let x = 0; x < cols; x++) {
-      const idx = histRef.current.length - cols + x
-      const bandsVals = histRef.current[idx]
-      for (let b = 0; b < bands; b++) {
-        const v = bandsVals ? bandsVals[b] || 0 : 0
-        const cx = startX + gap + x * (cellW + gap)
-        const cy = wfOffsetY + gap + (bands - 1 - b) * (cellW + gap)
-        elems.push(<rect key={`${x}-${b}`} x={cx} y={cy} width={cellW} height={cellW} fill={heatColor(v)} opacity={1} />)
-      }
-    }
-    return <>{elems}</>
-  }
-
   const barLen = Math.round(rmsSmoothedRef.current * (w - 60))
   return (
     <div style={{width:w, display:'flex', flexDirection:'column', gap:6, padding:'0 5px'}}>
       <svg width={w-10} height={h} style={{background:bg, border:'1px solid #1d2a3a', borderRadius:6, cursor:'pointer'}} onClick={onToggle}>
-        {mode === 'wave' ? renderWave() : mode === 'bars' ? renderBars() : renderWaterfall()}
+        {mode === 'wave' && (
+          <WaveViz width={w-10} height={h} samples={smoothSamples} gain={gain} gridColor={grid} lineColor={line} />
+        )}
+        {mode === 'bars' && (
+          <BarsViz width={w-10} height={h} samples={smoothSamples} gain={gain} barColor={line} />
+        )}
+        {mode === 'waterfall' && (
+          <WaterfallViz width={w-10} height={h} bands={bands} gap={gap} cell={cell} history={histRef.current} heatColor={heatColor} overrideOffsetY={wfOffsetY} />
+        )}
       </svg>
       {!hideRms && (
         <div title={t('rms_tooltip')} style={{display:'flex', alignItems:'center', gap:8, height:14}}>
