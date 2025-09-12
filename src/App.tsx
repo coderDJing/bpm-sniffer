@@ -8,7 +8,7 @@ import refresh from './assets/refresh.png'
 // @ts-ignore: optional plugin at runtime
 import { check } from '@tauri-apps/plugin-updater'
 import { getVersion } from '@tauri-apps/api/app'
-import { t } from './i18n'
+import { t, getCurrentLang, tn } from './i18n'
 
 type DisplayBpm = { bpm: number, confidence: number, state: 'tracking'|'uncertain'|'analyzing', level: number }
 type AudioViz = { samples: number[], rms: number }
@@ -96,6 +96,8 @@ export default function App() {
           }
         } catch {}
 
+        // 通知后端日志语言（中文/英文）
+        try { await invoke('set_log_lang', { is_zh: getCurrentLang() === 'zh-CN' }) } catch {}
         await invoke('start_capture')
         // 获取应用版本号
         try { const v = await getVersion(); setAppVersion(v) } catch {}
@@ -161,7 +163,7 @@ export default function App() {
           setViz(e.payload as any as AudioViz)
         })
         removeListener = () => { if (removeMql) removeMql(); unlistenA(); unlistenD() }
-      } catch (err) { console.error('[BOOT] error', err) }
+      } catch (err) { console.error(tn('[启动] 错误', '[BOOT] error'), err) }
     })()
 
     return () => { if (removeListener) removeListener() }
@@ -200,20 +202,24 @@ export default function App() {
     return () => window.removeEventListener('hashchange', handler)
   }, [])
 
-  // 全局禁用右键、选择与拖拽
+  // 全局禁用右键与拖拽；选择在 #logs 允许，其他页面禁用
   useEffect(() => {
-    const prevent = (e: Event) => {
-      e.preventDefault(); e.stopPropagation()
-    }
+    const prevent = (e: Event) => { e.preventDefault(); e.stopPropagation() }
+    const preventSel = (e: Event) => { e.preventDefault(); e.stopPropagation() }
     window.addEventListener('contextmenu', prevent, { capture: true })
     window.addEventListener('dragstart', prevent, { capture: true })
-    window.addEventListener('selectstart', prevent, { capture: true })
+    // 路由变化时，控制是否禁止选择
+    if (route !== '#logs') {
+      window.addEventListener('selectstart', preventSel, { capture: true })
+    } else {
+      window.removeEventListener('selectstart', preventSel, { capture: true } as any)
+    }
     return () => {
       window.removeEventListener('contextmenu', prevent, { capture: true } as any)
       window.removeEventListener('dragstart', prevent, { capture: true } as any)
-      window.removeEventListener('selectstart', prevent, { capture: true } as any)
+      window.removeEventListener('selectstart', preventSel, { capture: true } as any)
     }
-  }, [])
+  }, [route])
 
 
   function toggleTheme() {
@@ -245,7 +251,7 @@ export default function App() {
       setAlwaysOnTop(next)
       try { localStorage.setItem('bpm_on_top', next ? '1' : '0') } catch {}
     } catch (e) {
-      console.error('置顶切换失败', e)
+      console.error(tn('置顶切换失败', 'Toggle pin failed'), e)
     }
   }
 
@@ -285,6 +291,11 @@ export default function App() {
   if (route === '#about') {
     return (
       <AboutWindow themeName={themeName} setThemeName={setThemeName} appVersion={appVersion} />
+    )
+  }
+  if (route === '#logs') {
+    return (
+      <LogsWindow themeName={themeName} />
     )
   }
 
@@ -466,7 +477,7 @@ function AboutWindow({ themeName, setThemeName, appVersion }: { themeName: 'dark
           )}
           <div style={{display:'flex', flexDirection:'column', gap:2}}>
             <span style={{color:theme.textPrimary}}>{t('about_project')}</span>
-            <span style={{color:theme.textSecondary}}>https://github.com/coderDJing/bpm-sniffer</span>
+            <CopyItem text="https://github.com/coderDJing/bpm-sniffer" label="https://github.com/coderDJing/bpm-sniffer" />
           </div>
           <div style={{display:'flex', flexDirection:'column', gap:2, marginTop:6}}>
             <span style={{color:theme.textPrimary}}>{t('about_author')}</span>
@@ -474,12 +485,98 @@ function AboutWindow({ themeName, setThemeName, appVersion }: { themeName: 'dark
           </div>
           <div style={{display:'flex', flexDirection:'column', gap:2, marginTop:6}}>
             <span style={{color:theme.textPrimary}}>{t('about_contact')}</span>
-            <span style={{color:theme.textSecondary}}>jinlingwuyanzu@qq.com</span>
+            <CopyItem text="jinlingwuyanzu@qq.com" label="jinlingwuyanzu@qq.com" />
           </div>
         </div>
         {/* 关闭按钮已移除，保持简洁展示 */}
       </div>
     </main>
+  )
+}
+
+function LogsWindow({ themeName }: { themeName: 'dark'|'light' }) {
+  const darkTheme = { background: '#14060a', textPrimary: '#ffffff', textSecondary: '#f3a0b3', panelBg: '#1a0a0f' }
+  const lightTheme = { background: '#fff4f7', textPrimary: '#1b0a10', textSecondary: '#b21642', panelBg: '#ffe8ee' }
+  const theme = themeName === 'dark' ? darkTheme : lightTheme
+  const [logs, setLogs] = React.useState<string[]>([])
+  const wrapRef = React.useRef<HTMLDivElement | null>(null)
+  const atBottomRef = React.useRef(true)
+
+  React.useEffect(() => {
+    let unlisten: (() => void) | null = null
+    ;(async () => {
+      unlisten = await listen<string>('friendly_log', (e) => {
+        const msg = String(e.payload || '')
+        setLogs((prev) => {
+          const last = prev.length ? prev[prev.length - 1] : null
+          const dupQuiet = tn('暂未检测到清晰节拍，继续聆听…', 'No clear beat yet. Listening…')
+          const dupSilent = tn('检测到环境安静，BPM 为 0（等待声音）', 'Silence detected. BPM is 0 (waiting for audio)')
+          if ((msg === dupQuiet || msg === dupSilent) && last === msg) return prev
+          return [...prev, msg]
+        })
+      })
+    })()
+    return () => { if (unlisten) unlisten() }
+  }, [])
+
+  React.useEffect(() => {
+    const el = wrapRef.current
+    if (!el) return
+    const nearBottom = Math.abs(el.scrollHeight - el.clientHeight - el.scrollTop) < 8
+    if (nearBottom || atBottomRef.current) {
+      el.scrollTop = el.scrollHeight
+      atBottomRef.current = true
+    }
+  }, [logs])
+
+  function onScroll(e: React.UIEvent<HTMLDivElement>) {
+    const el = e.currentTarget
+    const nearBottom = Math.abs(el.scrollHeight - el.clientHeight - el.scrollTop) < 8
+    atBottomRef.current = nearBottom
+  }
+
+  const title = tn('分析日志', 'Logs')
+  return (
+    <main style={{height:'100vh',display:'flex',flexDirection:'column',gap:8,background:theme.background,color:theme.textPrimary,overflow:'hidden'}}>
+      <div style={{padding:'10px 10px 0 10px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+        <div style={{fontWeight:700,color:'#eb1a50'}}>{title}</div>
+        <div style={{display:'flex',gap:8}}>
+          <button onClick={() => setLogs([])} style={{fontSize:12,background:'transparent',border:'1px solid #3a0b17',color:theme.textSecondary,borderRadius:6,cursor:'pointer',padding:'4px 8px'}}>{tn('清空', 'Clear')}</button>
+        </div>
+      </div>
+      <div className="logs-scroll logs-selectable" ref={wrapRef} onScroll={onScroll} style={{flex:'1 1 auto',margin:'0 10px 10px 10px',background:theme.panelBg,border:'1px solid #1d2a3a',borderRadius:6,overflow:'auto',padding:8}}>
+        {logs.length === 0 ? (
+          <div style={{fontSize:12,color:theme.textSecondary}}>{tn('打开后开始接收日志…', 'Receiving logs since opened…')}</div>
+        ) : (
+          <pre style={{margin:0,whiteSpace:'pre-wrap',wordBreak:'break-word',fontSize:12,lineHeight:1.5}}>
+            {logs.map((l, i) => (
+              <div key={i}>{l}</div>
+            ))}
+          </pre>
+        )}
+      </div>
+    </main>
+  )
+}
+
+function CopyItem({ text, label }: { text: string, label: string }) {
+  const [tip, setTip] = React.useState<string | null>(null)
+  async function onCopy() {
+    try {
+      await navigator.clipboard.writeText(text)
+      setTip(tn('已复制到剪贴板', 'Copied to clipboard'))
+      setTimeout(() => setTip(null), 1200)
+    } catch {}
+  }
+  return (
+    <div style={{position:'relative'}}>
+      <button onClick={onCopy} style={{textAlign:'left',background:'transparent',border:'none',padding:0,cursor:'pointer',color:'#b21642'}}>{label}</button>
+      {tip && (
+        <div style={{position:'absolute', left:0, top:-24, background:'rgba(0,0,0,0.75)', color:'#fff', borderRadius:6, padding:'2px 6px', fontSize:11}}>
+          {tip}
+        </div>
+      )}
+    </div>
   )
 }
 

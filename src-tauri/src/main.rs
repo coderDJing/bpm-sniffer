@@ -4,6 +4,7 @@
 mod audio;
 mod bpm;
 mod tempo;
+mod lang;
 
 use std::{thread, time::Duration, sync::{Mutex, OnceLock}};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,6 +27,7 @@ use tauri::{LogicalSize, Size};
 
 use audio::AudioService;
 use tempo::{make_backend, TempoBackend};
+use lang::{is_log_zh, set_log_lang_zh};
 
 #[derive(Serialize, Clone, Copy)]
 struct DisplayBpm { bpm: f32, confidence: f32, state: &'static str, level: f32 }
@@ -74,6 +76,14 @@ fn append_log_line(line: &str) {
         if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(p) {
             let _ = writeln!(f, "{}", line);
         }
+    }
+}
+
+// 友好日志：按事件键节流，语言可切换，输出到控制台、落盘并透传给前端
+fn emit_friendly(app: &AppHandle, zh: impl Into<String>, en: impl Into<String>) {
+    if app.get_webview_window("logs").is_some() {
+        let msg = if is_log_zh() { zh.into() } else { en.into() };
+        let _ = app.emit_to("logs", "friendly_log", msg);
     }
 }
 
@@ -142,6 +152,12 @@ fn start_capture(app: AppHandle) -> Result<(), String> {
     });
     Ok(())
 }
+#[tauri::command]
+fn set_log_lang(is_zh: bool) -> Result<(), String> {
+    set_log_lang_zh(is_zh);
+    Ok(())
+}
+
 
 #[tauri::command]
 fn get_current_bpm() -> Option<DisplayBpm> {
@@ -191,9 +207,10 @@ fn reset_backend(app: AppHandle) -> Result<(), String> {
         flag.store(true, Ordering::SeqCst);
     }
     // 日志：记录刷新请求
-    append_log_line("[USER] reset_backend invoked");
-    eprintln!("[USER] reset_backend invoked");
-    let log = BackendLog { t_ms: now_ms(), msg: "[USER] reset_backend invoked".to_string() };
+    let boot_txt = if is_log_zh() { "[用户] 触发后端重置" } else { "[USER] reset_backend invoked" };
+    append_log_line(boot_txt);
+    eprintln!("{}", boot_txt);
+    let log = BackendLog { t_ms: now_ms(), msg: boot_txt.to_string() };
     let _ = app.emit_to("main", "bpm_log", log.clone());
     if let Some(cell) = COLLECTED_LOGS.get() { if let Ok(mut g) = cell.lock() { g.push(log); } }
     // 立即向前端发一次清零，提升“已重置”的即时反馈
@@ -205,6 +222,8 @@ fn reset_backend(app: AppHandle) -> Result<(), String> {
             let _ = app.emit_to("main", "bpm_update", payload);
         }
     }
+    // 友好提示
+    emit_friendly(&app, "已重置分析，正在重新聆听…", "Reset. Re-analyzing…");
     Ok(())
 }
 
@@ -228,6 +247,8 @@ fn now_ms() -> u64 {
 
 fn run_capture(app: AppHandle) -> Result<()> {
     let (svc, rx, sr_rx) = AudioService::start_loopback()?;
+    // 友好提示：开始捕获系统音频（仅在日志窗口存在时发送）
+    emit_friendly(&app, "已开始捕获系统音频", "Started capturing system audio");
 
     let mut backend: Box<dyn TempoBackend> = make_backend(svc.sample_rate());
 
@@ -262,6 +283,10 @@ fn run_capture(app: AppHandle) -> Result<()> {
     let mut prev_rms_db: Option<f32> = None;
     let mut recent_none_flag: bool = false;
     let mut dev_from_lock_cnt: u8 = 0;
+    // 记录是否处于静音，用于检测“恢复有声”
+    let mut was_silent_flag: bool = false;
+    // 记录上一次原始估计来自短窗/长窗
+    let mut last_from_short: Option<bool> = None;
     // 记录最近一次“非灰显（高亮）”显示的整数与状态，用于软门同整数时维持高亮
     let mut last_hard_int: Option<i32> = None;
     let mut last_hard_state: Option<&'static str> = None;
@@ -428,9 +453,17 @@ fn run_capture(app: AppHandle) -> Result<()> {
             }
             // （已移除 bpm_debug 事件收集）
             disp_hist.clear(); ema_disp = None; prev_rms_db = None;
+            // 友好提示：环境安静
+            emit_friendly(&app, "检测到环境安静，BPM 为 0（等待声音）", "Silence detected. BPM is 0 (waiting for audio)");
+            was_silent_flag = true;
             // 滑动步进
             for _ in 0..hop_len { let _ = window.pop_front(); }
             continue;
+        }
+        // 若从静音恢复到有声
+        if was_silent_flag {
+            emit_friendly(&app, "检测到声音，开始分析…", "Audio detected. Analyzing…");
+            was_silent_flag = false;
         }
         silent_win_cnt = 0;
 
@@ -473,8 +506,20 @@ fn run_capture(app: AppHandle) -> Result<()> {
 
         if let Some(raw) = backend.process(&frames_for_analysis) {
             none_cnt = 0;
+            // 短窗/长窗切换提示（来源变化）
+            if last_from_short.map_or(true, |v| v != raw.from_short) {
+                if raw.from_short { emit_friendly(&app, "切换为短窗优先（更快跟随变化）", "Switched to short-window (faster response)"); }
+                else { emit_friendly(&app, "切换为长窗优先（更稳更准）", "Switched to long-window (more stable)"); }
+                last_from_short = Some(raw.from_short);
+            }
             // 能量跳变触发切歌快速重锁
-            if let Some(pdb) = prev_rms_db { if (cur_db - pdb).abs() >= 6.0 { fast_relock_deadline = Some(now_ms().saturating_add(2000)); anchor_bpm = None; stable_vals.clear(); } }
+            if let Some(pdb) = prev_rms_db {
+                if (cur_db - pdb).abs() >= 6.0 {
+                    fast_relock_deadline = Some(now_ms().saturating_add(2000));
+                    anchor_bpm = None; stable_vals.clear();
+                    emit_friendly(&app, "检测到变化，快速锁定中…", "Change detected. Fast relock…");
+                }
+            }
             prev_rms_db = Some(cur_db);
 
             let mut conf = raw.confidence.min(0.9);
@@ -494,22 +539,28 @@ fn run_capture(app: AppHandle) -> Result<()> {
             if !tracking && hi_cnt >= 3 {
                 tracking = true; ever_locked = true;
                 if EMIT_TEXT_LOGS {
-                    let txt = format!("[STATE] tracking=ON  bpm={:.1} conf={:.2}", raw.bpm, conf);
+                    let txt = if is_log_zh() { format!("[状态] 进入追踪 bpm={:.1} 置信度={:.2}", raw.bpm, conf) } else { format!("[STATE] tracking=ON  bpm={:.1} conf={:.2}", raw.bpm, conf) };
                     eprintln!("{}", txt);
                     let log = BackendLog { t_ms: now_ms(), msg: txt.clone() };
                     let _ = app.emit_to("main", "bpm_log", log.clone());
                     if let Some(cell) = COLLECTED_LOGS.get() { if let Ok(mut g) = cell.lock() { g.push(log); } }
                 }
+                // 友好提示：锁定节拍
+                emit_friendly(&app, format!("已锁定节拍：约 {:.0} BPM（稳定度 {:.0}%）", raw.bpm, conf*100.0), format!("Beat locked: ~{:.0} BPM (confidence {:.0}%)", raw.bpm, conf*100.0));
+                // 友好提示：节拍已稳定，开始高亮显示
+                emit_friendly(&app, "节拍已稳定，开始高亮显示", "Beat stable. Highlighting");
             }
             if tracking && lo_cnt >= 2 {
                 tracking = false;
                 if EMIT_TEXT_LOGS {
-                    let txt = format!("[STATE] tracking=OFF conf={:.2}", conf);
+                    let txt = if is_log_zh() { format!("[状态] 退出追踪 置信度={:.2}", conf) } else { format!("[STATE] tracking=OFF conf={:.2}", conf) };
                     eprintln!("{}", txt);
                     let log = BackendLog { t_ms: now_ms(), msg: txt.clone() };
                     let _ = app.emit_to("main", "bpm_log", log.clone());
                     if let Some(cell) = COLLECTED_LOGS.get() { if let Ok(mut g) = cell.lock() { g.push(log); } }
                 }
+                // 友好提示：丢失节拍
+                emit_friendly(&app, "节拍暂不稳定，正在重新分析…", "Beat unstable. Re-analyzing…");
             }
 
             let state: &str = if tracking { "tracking" } else if ever_locked { "uncertain" } else { "analyzing" };
@@ -537,7 +588,8 @@ fn run_capture(app: AppHandle) -> Result<()> {
                 try_cand(disp * (2.0/3.0), "two_thirds", &mut best_bpm, &mut best_err, &mut best_kind);
                 try_cand(disp * (3.0/2.0), "three_halves", &mut best_bpm, &mut best_err, &mut best_kind);
 
-                if best_bpm != disp && EMIT_TEXT_LOGS { eprintln!("[CORR] {} -> {:.1} (base={:.1}, raw={:.1})", best_kind, best_bpm, base, disp); }
+                if best_bpm != disp && EMIT_TEXT_LOGS { if is_log_zh() { eprintln!("[谐波校正] {} -> {:.1} (基准={:.1}, 原始={:.1})", best_kind, best_bpm, base, disp); } else { eprintln!("[CORR] {} -> {:.1} (base={:.1}, raw={:.1})", best_kind, best_bpm, base, disp); } }
+                if best_bpm != disp { emit_friendly(&app, format!("已纠正谐波：{} → {:.1}（参考 {:.1}，原始 {:.1}）", best_kind, best_bpm, base, disp), format!("Harmonic correction: {} → {:.1} (ref {:.1}, raw {:.1})", best_kind, best_bpm, base, disp)); }
                 disp = best_bpm; _corr_kind = best_kind;
             }
 
@@ -622,10 +674,15 @@ fn run_capture(app: AppHandle) -> Result<()> {
             }
 
             // 最近 none 恢复触发：下一帧进入快速重锁期（若达到基础置信度）
-            if recent_none_flag && conf >= 0.50 { fast_relock_deadline = Some(now_ms().saturating_add(2000)); anchor_bpm = None; recent_none_flag = false; stable_vals.clear(); }
+            if recent_none_flag && conf >= 0.50 {
+                fast_relock_deadline = Some(now_ms().saturating_add(2000));
+                anchor_bpm = None; recent_none_flag = false; stable_vals.clear();
+                emit_friendly(&app, "从空段恢复，快速锁定中…", "Recovered from none, fast relock…");
+            }
             if dev_from_lock_cnt >= 2 {
                 fast_relock_deadline = Some(now_ms().saturating_add(2000));
                 anchor_bpm = None; dev_from_lock_cnt = 0; stable_vals.clear();
+                emit_friendly(&app, "检测到与锁定值偏离，快速锁定中…", "Deviation from locked value, fast relock…");
                 // 若近期整数直方统计中出现新主导整数（计数≥3），请求清空锁以便快速吸附
                 let nowh = now_ms();
                 let mut counts: std::collections::HashMap<i32, usize> = std::collections::HashMap::new();
@@ -691,7 +748,7 @@ fn run_capture(app: AppHandle) -> Result<()> {
                                 try_back(disp*2.0, &mut best, &mut err);
                                 try_back(disp*(2.0/3.0), &mut best, &mut err);
                                 try_back(disp*(3.0/2.0), &mut best, &mut err);
-                                if err <= 0.08 { disp = best; } else { allow_hard = false; if EMIT_TEXT_LOGS { eprintln!("[OUTLIER] suppress show bpm={:.1} base={:.1} rel={:.3}", disp, base, rel); } }
+                                if err <= 0.08 { disp = best; } else { allow_hard = false; if EMIT_TEXT_LOGS { if is_log_zh() { eprintln!("[离群] 抑制显示 bpm={:.1} 基准={:.1} 相对误差={:.3}", disp, base, rel); } else { eprintln!("[OUTLIER] suppress show bpm={:.1} base={:.1} rel={:.3}", disp, base, rel); } } emit_friendly(&app, format!("忽略异常候选：{:.1} BPM（偏离 {:.0}%）", disp, rel*100.0), format!("Ignored outlier: {:.1} BPM (deviation {:.0}%)", disp, rel*100.0)); }
                             }
                         }}
                         // 范围限幅：若候选超出 91–180 且存在基准，则直接抑制
@@ -699,7 +756,8 @@ fn run_capture(app: AppHandle) -> Result<()> {
                             if let Some(base) = base_for_guard {
                                 if (disp > 180.0 || disp < 91.0) && conf >= 0.80 {
                                     allow_hard = false;
-                                    if EMIT_TEXT_LOGS { eprintln!("[OUTLIER] suppress out-of-range bpm={:.1} base={:.1}", disp, base); }
+                                    if EMIT_TEXT_LOGS { if is_log_zh() { eprintln!("[离群] 超出范围 bpm={:.1} 基准={:.1}", disp, base); } else { eprintln!("[OUTLIER] suppress out-of-range bpm={:.1} base={:.1}", disp, base); } }
+                                    emit_friendly(&app, format!("放弃越界结果：{:.1} BPM（当前范围 91–180）", disp), format!("Dropped out-of-range result: {:.1} BPM (range 91–180)", disp));
                                 }
                             }
                         }
@@ -759,7 +817,11 @@ fn run_capture(app: AppHandle) -> Result<()> {
                             if let Some((k, c)) = best {
                                 let prev_int = (*guard).and_then(|g| Some(g.bpm.round() as i32)).unwrap_or(disp_int);
                                 let need = if in_fast { 2 } else { 3 };
-                                if (allow_soft || allow_hard || allow_major) && c >= need && k != prev_int { DisplayBpm { bpm: k as f32, confidence: conf, state: "uncertain", level } }
+                                if (allow_soft || allow_hard || allow_major) && c >= need && k != prev_int { 
+                                    // 友好提示：多数派导致的整数切换
+                                    emit_friendly(&app, format!("依据多数候选切换整数至 {} BPM", k), format!("Switched to majority integer {} BPM", k));
+                                    DisplayBpm { bpm: k as f32, confidence: conf, state: "uncertain", level }
+                                }
                                 else { DisplayBpm { bpm: disp, confidence: conf, state: show_state, level } }
                             } else { DisplayBpm { bpm: disp, confidence: conf, state: show_state, level } }
                         };
@@ -767,7 +829,12 @@ fn run_capture(app: AppHandle) -> Result<()> {
                     let _ = app.emit_to("main", "bpm_update", payload);
                         // TTL 更新时间已在整数锁作用域内完成
                         // 记录最近一次高亮整数
-                        if !allow_soft { last_hard_int = Some(disp_int); last_hard_state = Some(state); }
+                        if !allow_soft {
+                            // 若显示整数变化，输出一次友好提示
+                            let changed = match last_hard_int { Some(prev) => prev != disp_int, None => true };
+                            if changed { emit_friendly(&app, format!("当前节拍：{} BPM", disp_int), format!("Current tempo: {} BPM", disp_int)); }
+                            last_hard_int = Some(disp_int); last_hard_state = Some(state);
+                        }
                         // 记录近期整数（用于快速主导整数判定）
                         let nowh = now_ms();
                         recent_ints.push_back((payload.bpm.round() as i32, nowh));
@@ -781,12 +848,12 @@ fn run_capture(app: AppHandle) -> Result<()> {
                     let rel = (disp - base).abs() / base.max(1e-6);
                     if rel <= 0.08 && (60.0..=160.0).contains(&disp) {
                         anchor_bpm = Some(base * 0.85 + disp * 0.15);
-                        if let Some(a) = anchor_bpm { if EMIT_TEXT_LOGS { let txt = format!("[ANCHOR] anchor_bpm(update) -> {:.1}", a); eprintln!("{}", txt); let _ = app.emit_to("main", "bpm_log", BackendLog { t_ms: now_ms(), msg: txt }); } }
+                        if let Some(a) = anchor_bpm { if EMIT_TEXT_LOGS { let txt = if is_log_zh() { format!("[锚点] 更新 -> {:.1}", a) } else { format!("[ANCHOR] anchor_bpm(update) -> {:.1}", a) }; eprintln!("{}", txt); let _ = app.emit_to("main", "bpm_log", BackendLog { t_ms: now_ms(), msg: txt }); } emit_friendly(&app, format!("更新参考节拍：{:.1} BPM", a), format!("Anchor updated: {:.1} BPM", a)); }
                     }
                 } else {
                     if (60.0..=160.0).contains(&disp) {
                         anchor_bpm = Some(disp);
-                        if EMIT_TEXT_LOGS { let txt = format!("[ANCHOR] anchor_bpm(init) -> {:.1}", disp); eprintln!("{}", txt); let _ = app.emit_to("main", "bpm_log", BackendLog { t_ms: now_ms(), msg: txt }); }
+                        if EMIT_TEXT_LOGS { let txt = if is_log_zh() { format!("[锚点] 初始化 -> {:.1}", disp) } else { format!("[ANCHOR] anchor_bpm(init) -> {:.1}", disp) }; eprintln!("{}", txt); let _ = app.emit_to("main", "bpm_log", BackendLog { t_ms: now_ms(), msg: txt }); } emit_friendly(&app, format!("建立参考节拍：{:.1} BPM", disp), format!("Anchor set: {:.1} BPM", disp));
                     }
                 }
             }
@@ -797,10 +864,11 @@ fn run_capture(app: AppHandle) -> Result<()> {
             // 仅输出前端会显示的 BPM 日志（置信度达到门槛）
             if conf >= 0.80 && EMIT_TEXT_LOGS {
             let src = if raw.from_short { "S" } else { "L" };
-                let txt = format!(
-                    "[SHOW] win={:.1}s src={} bpm={:.1} conf={:.2} state={} lvl={:.2}",
-                    raw.win_sec, src, disp, conf, state, level
-                );
+                let txt = if is_log_zh() {
+                    format!("[显示] 窗口={:.1}s 源={} bpm={:.1} 置信度={:.2} 状态={} 电平={:.2}", raw.win_sec, src, disp, conf, state, level)
+                } else {
+                    format!("[SHOW] win={:.1}s src={} bpm={:.1} conf={:.2} state={} lvl={:.2}", raw.win_sec, src, disp, conf, state, level)
+                };
                 eprintln!("{}", txt);
                 let log = BackendLog { t_ms: now_ms(), msg: txt.clone() };
                 let _ = app.emit_to("main", "bpm_log", log.clone());
@@ -825,12 +893,14 @@ fn run_capture(app: AppHandle) -> Result<()> {
             }
             // 文本日志：无有效估计
             if EMIT_TEXT_LOGS {
-                let txt = format!("[NONE] win step no estimate, lvl={:.2} tracking={} none_cnt={}", level, tracking, none_cnt);
+                let txt = if is_log_zh() { format!("[无结果] 本步无估计 电平={:.2} 追踪={} 连续空帧={}", level, tracking, none_cnt) } else { format!("[NONE] win step no estimate, lvl={:.2} tracking={} none_cnt={}", level, tracking, none_cnt) };
                 eprintln!("{}", txt);
                 let log = BackendLog { t_ms: now_ms(), msg: txt.clone() };
                 let _ = app.emit_to("main", "bpm_log", log.clone());
                 if let Some(cell) = COLLECTED_LOGS.get() { if let Ok(mut g) = cell.lock() { g.push(log); } }
             }
+            // 友好提示：尚未检测到清晰节拍
+            emit_friendly(&app, "暂未检测到清晰节拍，继续聆听…", "No clear beat yet. Listening…");
             // （已移除 bpm_debug 事件收集）
             // 滑动步进
             for _ in 0..hop_len { let _ = window.pop_front(); }
@@ -846,6 +916,14 @@ fn stop_capture() -> Result<(), String> { Ok(()) }
 fn main() {
     // 超早期日志，捕捉初始化前的崩溃
     early_setup_logging();
+    // 初始默认：根据进程环境语言尝试一次判定（仅作为默认，前端会覆盖）
+    // 若 OS 不是中文，默认英文；若包含 zh/zh-CN/zh-Hans 则默认中文
+    {
+        let mut zh = false;
+        if let Ok(lang) = std::env::var("LANG") { let s = lang.to_lowercase(); zh = s.starts_with("zh") || s.contains("zh_cn") || s.contains("zh-hans"); }
+        if !zh { if let Ok(oslang) = std::env::var("OSLANG") { let s = oslang.to_lowercase(); zh = s.starts_with("zh"); } }
+        set_log_lang_zh(zh);
+    }
     // 尝试加载本地环境变量文件（用于本地开发/私有更新源覆盖）
     let _ = dotenvy::from_filename(".env.local");
     let _ = dotenvy::dotenv();
@@ -862,11 +940,17 @@ fn main() {
         .setup(|app| {
             let handle = app.handle();
             setup_logging(&handle);
-            // 系统托盘与菜单（临时固定英文）
-            let about = MenuItemBuilder::new("About").id("about").build(app)?;
-            let quit = MenuItemBuilder::new("Quit").id("quit").build(app)?;
+            // 输出一次当前日志语言（用于确认）
+            if is_log_zh() { append_log_line("[LANG] 日志语言=中文"); eprintln!("[语言] 日志输出：中文"); } else { append_log_line("[LANG] log language=EN"); eprintln!("[LANG] log language: EN"); }
+            // 系统托盘与菜单（多语言）
+            let logs_label = if is_log_zh() { "分析日志" } else { "Logs" };
+            let about_label = if is_log_zh() { "关于" } else { "About" };
+            let quit_label = if is_log_zh() { "退出" } else { "Quit" };
+            let logs = MenuItemBuilder::new(logs_label).id("logs").build(app)?;
+            let about = MenuItemBuilder::new(about_label).id("about").build(app)?;
+            let quit = MenuItemBuilder::new(quit_label).id("quit").build(app)?;
             let menu = MenuBuilder::new(app)
-                .items(&[&about, &quit])
+                .items(&[&logs, &about, &quit])
                 .build()?;
 
             let icon = app.default_window_icon().cloned();
@@ -874,6 +958,22 @@ fn main() {
                 .menu(&menu)
                 .on_menu_event(|app, event| {
                     match event.id().as_ref() {
+                        "logs" => {
+                            if let Some(win) = app.get_webview_window("logs") {
+                                let _ = win.set_focus();
+                            } else {
+                                #[cfg(debug_assertions)]
+                                let url = Url::parse("http://localhost:5173/#logs").unwrap();
+                                #[cfg(not(debug_assertions))]
+                                let url = Url::parse("tauri://localhost/index.html#logs").unwrap();
+                                let title = if is_log_zh() { "分析日志" } else { "Logs" };
+                                let _ = WebviewWindowBuilder::new(app, "logs", WebviewUrl::External(url))
+                                    .title(title)
+                                    .resizable(true)
+                                    .inner_size(560.0, 420.0)
+                                    .build();
+                            }
+                        }
                         "about" => {
                             if let Some(win) = app.get_webview_window("about") {
                                 let _ = win.set_focus();
@@ -932,7 +1032,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![start_capture, stop_capture, get_current_bpm, set_always_on_top, get_updater_endpoints, get_log_dir, reset_backend])
+        .invoke_handler(tauri::generate_handler![start_capture, stop_capture, get_current_bpm, set_always_on_top, get_updater_endpoints, get_log_dir, reset_backend, set_log_lang])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

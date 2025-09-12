@@ -20,11 +20,13 @@
           ],
           "windows": [
             "main",
-            "about"
+            "about",
+            "logs"
           ],
           "webviews": [
             "main",
-            "about"
+            "about",
+            "logs"
           ],
           "permissions": [
             "core:default",

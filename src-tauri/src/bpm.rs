@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use crate::lang::is_log_zh;
 use serde::Serialize;
 
 // 诊断日志开关：临时开启，便于定位 NONE 的原因（完成后可改为 false）
@@ -55,7 +56,7 @@ impl BpmEstimator {
             short_consistency: 0,
             last_bpm: None,
         };
-        eprintln!("[INIT] BpmEstimator sr={} ds_rate={}", sample_rate, 200.0f32);
+        if is_log_zh() { eprintln!("[初始化] 估计器 sr={} 下采样率={}Hz", sample_rate, 200.0f32); } else { eprintln!("[INIT] BpmEstimator sr={} ds_rate={}", sample_rate, 200.0f32); }
         this
     }
 
@@ -70,7 +71,7 @@ impl BpmEstimator {
                 self.hp_lp_prev = 0.0; self.lp_prev = 0.0; self.prev_bp = 0.0;
                 let keep = (self.ds_rate as usize) * 1; // 保留 1 秒尾部
                 while self.buf.len() > keep { self.buf.pop_front(); }
-                eprintln!("[RST] input_db jump {:.1} -> {:.1}, reset filters & trim buffer", self.last_input_rms_db, db);
+                if is_log_zh() { eprintln!("[复位] 输入电平跳变 {:.1} -> {:.1}，重置滤波并裁剪缓冲", self.last_input_rms_db, db); } else { eprintln!("[RST] input_db jump {:.1} -> {:.1}, reset filters & trim buffer", self.last_input_rms_db, db); }
             }
             self.last_input_rms_db = db;
         }
@@ -111,7 +112,7 @@ impl BpmEstimator {
 
         // 能量门限（静音/弱信号直接不给估计）
         let rms = (self.buf.iter().map(|v| v * v).sum::<f32>() / self.buf.len() as f32).sqrt();
-        if rms < 4e-4 { eprintln!("[GATE] ds_rms={:.6} below threshold, skip", rms); return None; }
+        if rms < 4e-4 { if is_log_zh() { eprintln!("[门限] 下采样RMS={:.6} 低于阈值，跳过", rms); } else { eprintln!("[GATE] ds_rms={:.6} below threshold, skip", rms); } return None; }
 
         // 公共参数
         let min_lag = (self.ds_rate * 60.0 / self.max_bpm).round() as usize;
@@ -361,10 +362,12 @@ impl BpmEstimator {
                 self.last_short_bpm = Some(bs);
                 let prefer_short = diverge && cs >= cl * 0.75 && self.short_consistency >= 2;
                 if prefer_short {
-                    eprintln!("[SEL] short bs={:.1} cs={:.2} wl={:.1}s diverge={} sc={} vs long bl={:.1} cl={:.2}", bs, cs, ws, diverge, self.short_consistency, bl, cl);
+                    if is_log_zh() { eprintln!("[选择] 短窗 bs={:.1} cs={:.2} wl={:.1}s 分歧={} 连续={} 对比 长窗 bl={:.1} cl={:.2}", bs, cs, ws, diverge, self.short_consistency, bl, cl); }
+                    else { eprintln!("[SEL] short bs={:.1} cs={:.2} wl={:.1}s diverge={} sc={} vs long bl={:.1} cl={:.2}", bs, cs, ws, diverge, self.short_consistency, bl, cl); }
                     (bs, cs, true, ws)
                 } else {
-                    eprintln!("[SEL] long  bl={:.1} cl={:.2} wl={:.1}s vs short bs={:.1} cs={:.2} diverge={} sc={}", bl, cl, wl, bs, cs, diverge, self.short_consistency);
+                    if is_log_zh() { eprintln!("[选择] 长窗 bl={:.1} cl={:.2} wl={:.1}s 对比 短窗 bs={:.1} cs={:.2} 分歧={} 连续={}", bl, cl, wl, bs, cs, diverge, self.short_consistency); }
+                    else { eprintln!("[SEL] long  bl={:.1} cl={:.2} wl={:.1}s vs short bs={:.1} cs={:.2} diverge={} sc={}", bl, cl, wl, bs, cs, diverge, self.short_consistency); }
                     (bl, cl, false, wl)
                 }
             }
@@ -375,7 +378,7 @@ impl BpmEstimator {
 
         // 记录上次输出 BPM
         self.last_bpm = Some(bpm);
-        eprintln!("[OUT] bpm={:.1} conf={:.2} src={} win={:.1}s", bpm, confidence, if from_short { 'S' } else { 'L' }, win_sec);
+        if is_log_zh() { eprintln!("[输出] bpm={:.1} 置信度={:.2} 源={} 窗口={:.1}s", bpm, confidence, if from_short { 'S' } else { 'L' }, win_sec); } else { eprintln!("[OUT] bpm={:.1} conf={:.2} src={} win={:.1}s", bpm, confidence, if from_short { 'S' } else { 'L' }, win_sec); }
         Some(BpmEstimate { bpm, confidence, rms, from_short, win_sec })
     }
 }

@@ -18,6 +18,10 @@ export function setLang(lang: SupportedLang) {
   currentLang = lang
 }
 
+export function getCurrentLang(): SupportedLang {
+  return currentLang
+}
+
 type Dict = Record<string, { 'zh-CN': string, en: string }>
 
 const dict: Dict = {
