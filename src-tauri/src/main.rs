@@ -923,12 +923,34 @@ fn stop_capture() -> Result<(), String> { Ok(()) }
 fn main() {
     // 超早期日志，捕捉初始化前的崩溃
     early_setup_logging();
-    // 初始默认：根据进程环境语言尝试一次判定（仅作为默认，前端会覆盖）
-    // 若 OS 不是中文，默认英文；若包含 zh/zh-CN/zh-Hans 则默认中文
+    // 初始默认：根据系统语言判定一次（Windows 读取注册表 LocaleName；其它平台回退 LANG/OSLANG）
     {
         let mut zh = false;
-        if let Ok(lang) = std::env::var("LANG") { let s = lang.to_lowercase(); zh = s.starts_with("zh") || s.contains("zh_cn") || s.contains("zh-hans"); }
-        if !zh { if let Ok(oslang) = std::env::var("OSLANG") { let s = oslang.to_lowercase(); zh = s.starts_with("zh"); } }
+        #[cfg(target_os = "windows")]
+        {
+            use winreg::enums::*;
+            use winreg::RegKey;
+            // 优先 HKCU，其次 HKU/.DEFAULT，读取 LocaleName，例如 zh-CN / en-US
+            let hcu = RegKey::predef(HKEY_CURRENT_USER);
+            if let Ok(cp) = hcu.open_subkey("Control Panel\\International") {
+                if let Ok(name) = cp.get_value::<String, _>("LocaleName") {
+                    let s = name.to_lowercase(); zh = s.starts_with("zh");
+                }
+            }
+            if !zh {
+                let hku = RegKey::predef(HKEY_USERS);
+                if let Ok(def) = hku.open_subkey(".DEFAULT\\Control Panel\\International") {
+                    if let Ok(name) = def.get_value::<String, _>("LocaleName") {
+                        let s = name.to_lowercase(); zh = s.starts_with("zh");
+                    }
+                }
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            if let Ok(lang) = std::env::var("LANG") { let s = lang.to_lowercase(); zh = s.starts_with("zh") || s.contains("zh_cn") || s.contains("zh-hans"); }
+            if !zh { if let Ok(oslang) = std::env::var("OSLANG") { let s = oslang.to_lowercase(); zh = s.starts_with("zh"); } }
+        }
         set_log_lang_zh(zh);
     }
     // 尝试加载本地环境变量文件（用于本地开发/私有更新源覆盖）

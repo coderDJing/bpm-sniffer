@@ -23,6 +23,7 @@ thiserror = "1"
 anyhow = "1"
 # 环境变量加载（本地覆盖更新端点）
 dotenvy = "0.15"
+winreg = { version = "0.52", optional = true }
 # Windows WASAPI / COM
 # Windows 平台专用依赖
 [target.'cfg(target_os = "windows")'.dependencies]
@@ -36,6 +37,7 @@ windows = { version = "0.61", features = [
   "Win32_Media_Audio",
   "Win32_Media_KernelStreaming"
 ] }
+winreg = { version = "0.52" }
 # 单实例插件
 tauri-plugin-single-instance = "2"
 
