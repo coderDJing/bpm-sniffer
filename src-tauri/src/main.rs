@@ -15,6 +15,7 @@ use std::collections::VecDeque;
 use anyhow::Result;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, Emitter};
+// use tauri::window::Color; // not needed currently
 use tauri_plugin_single_instance::init as single_instance;
 // use tauri_plugin_updater::UpdaterExt;
 use serde_json::Value as JsonValue;
@@ -23,7 +24,7 @@ use tauri::tray::TrayIconBuilder;
 use tauri::Url;
 use tauri::webview::WebviewWindowBuilder;
 use tauri::WebviewUrl;
-use tauri::{LogicalSize, Size};
+use tauri::{LogicalSize, Size, Position, PhysicalPosition};
 
 use audio::AudioService;
 use tempo::{make_backend, TempoBackend};
@@ -50,6 +51,9 @@ struct AudioViz {
 static CURRENT_BPM: OnceLock<Mutex<Option<DisplayBpm>>> = OnceLock::new();
 static COLLECTED_LOGS: OnceLock<Mutex<Vec<BackendLog>>> = OnceLock::new();
 static RESET_REQUESTED: OnceLock<AtomicBool> = OnceLock::new();
+static CAPTURE_RUNNING: OnceLock<AtomicBool> = OnceLock::new();
+// 历史位置记忆已关闭（使用默认右上角定位）
+// static LAST_FLOAT_POS: OnceLock<Mutex<Option<(i32, i32)>>> = OnceLock::new();
 const EMIT_TEXT_LOGS: bool = true;
 // 可视化输出的下采样波形长度（与前端保持一致）
 const OUT_LEN: usize = 192;
@@ -149,6 +153,12 @@ fn start_capture(app: AppHandle) -> Result<(), String> {
     let _ = CURRENT_BPM.set(Mutex::new(None));
     let _ = COLLECTED_LOGS.set(Mutex::new(Vec::new()));
     let _ = RESET_REQUESTED.set(AtomicBool::new(false));
+    // 启动防抖：确保采集线程只启动一次（避免多窗口重复启动）
+    let flag = CAPTURE_RUNNING.get_or_init(|| AtomicBool::new(false));
+    let was_running = flag.swap(true, Ordering::SeqCst);
+    if was_running {
+        return Ok(());
+    }
     thread::spawn(move || {
         if let Err(_e) = run_capture(app) { }
     });
@@ -180,6 +190,84 @@ fn set_always_on_top(app: AppHandle, on_top: bool) -> Result<(), String> {
     } else {
         Err("window not found".into())
     }
+}
+
+#[tauri::command]
+fn enter_floating(app: AppHandle) -> Result<(), String> {
+    // 创建悬浮球窗口（透明、无边框、置顶、隐藏任务栏）
+    append_log_line("[FLOAT] enter_floating invoked");
+    eprintln!("[FLOAT] enter_floating invoked");
+    // 切回“独立透明窗口”方案：新建 float 窗口 + 透明 + 无边框 + 置顶
+    eprintln!("[FLOAT] creating dedicated transparent window");
+    // 使用 App 协议，dev 模式会自动映射到 dev 服务器
+    // 如果在配置中已声明 float 窗口，则直接获取并显示
+    if let Some(w) = app.get_webview_window("float") {
+        let _ = w.set_always_on_top(true);
+        let _ = w.set_skip_taskbar(true);
+        // 开发模式下显式导航至 Vite dev 服务，避免 asset not found
+        // 固定默认位置：主屏右上角留 40px 边距
+        if let Ok(Some(mon)) = w.current_monitor() {
+            let size = mon.size();
+            let pos = mon.position();
+            let scale = mon.scale_factor();
+            // 我们的窗口逻辑大小与配置一致（默认 84x84）
+            let wpx = (84.0 * scale) as i32;
+            let margin = (40.0 * scale) as i32;
+            let x = pos.x + size.width as i32 - wpx - margin;
+            let y = pos.y + margin;
+            let _ = w.set_position(Position::Physical(PhysicalPosition::new(x, y)));
+        }
+        let _ = w.navigate(Url::parse("tauri://localhost/index.html#float").unwrap_or_else(|_| Url::parse("tauri://localhost/#float").unwrap()));
+        let _ = w.show();
+        let _ = w.set_focus();
+        eprintln!("[FLOAT] show float window");
+        append_log_line("[FLOAT] show float window");
+    } else {
+        // 理论上不会发生（预声明的 float 始终存在且我们不再关闭它）
+        eprintln!("[FLOAT] WARN: float window not found (should be pre-declared)");
+        append_log_line("[FLOAT] WARN: float window not found (should be pre-declared)");
+    }
+    // 隐藏主窗口，避免任务栏占位（如果主窗口尚未创建则忽略）
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.set_skip_taskbar(true);
+        let _ = main.hide();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn exit_floating(app: AppHandle) -> Result<(), String> {
+    append_log_line("[FLOAT] exit_floating invoked");
+    eprintln!("[FLOAT] exit_floating invoked");
+    // 不再关闭浮窗，改为仅隐藏
+    if let Some(f) = app.get_webview_window("float") { let _ = f.hide(); }
+    if let Some(main) = app.get_webview_window("main") {
+        append_log_line("[FLOAT] restore MAIN from floating style");
+        eprintln!("[FLOAT] restore MAIN from floating style");
+        let _ = main.set_decorations(true);
+        let _ = main.set_resizable(true);
+        let _ = main.set_skip_taskbar(false);
+        let _ = main.set_always_on_top(false);
+        let _ = main.set_min_size(Some(Size::Logical(LogicalSize::new(220.0, 120.0))));
+        let _ = main.set_max_size(Some(Size::Logical(LogicalSize::new(560.0, 560.0))));
+        let _ = main.set_size(Size::Logical(LogicalSize::new(390.0, 390.0)));
+        #[cfg(debug_assertions)]
+        { let _ = main.navigate(Url::parse("tauri://localhost/").unwrap()); }
+        #[cfg(not(debug_assertions))]
+        { let _ = main.navigate(Url::parse("tauri://localhost/index.html").unwrap()); }
+        let _ = main.show();
+        let _ = main.set_focus();
+    } else {
+        append_log_line("[FLOAT] ERROR: main window not found on exit");
+        eprintln!("[FLOAT] ERROR: main window not found on exit");
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn save_float_pos(_x: i32, _y: i32) -> Result<(), String> {
+    // 位置记忆功能已移除：该命令不再执行任何操作（兼容前端旧调用）
+    Ok(())
 }
 
 #[tauri::command]
@@ -221,12 +309,12 @@ fn reset_backend(app: AppHandle) -> Result<(), String> {
     let _ = app.emit_to("main", "bpm_log", log.clone());
     if let Some(cell) = COLLECTED_LOGS.get() { if let Ok(mut g) = cell.lock() { g.push(log); } }
     // 立即向前端发一次清零，提升“已重置”的即时反馈
-    let _ = app.emit_to("main", "viz_update", AudioViz { samples: vec![0.0; OUT_LEN], rms: 0.0 });
+    let _ = app.emit("viz_update", AudioViz { samples: vec![0.0; OUT_LEN], rms: 0.0 });
     if let Some(cell) = CURRENT_BPM.get() {
         if let Ok(mut guard) = cell.lock() {
             let payload = DisplayBpm { bpm: 0.0, confidence: 0.0, state: "analyzing", level: 0.0 };
             *guard = Some(payload);
-            let _ = app.emit_to("main", "bpm_update", payload);
+            let _ = app.emit("bpm_update", payload);
         }
     }
     // 友好提示
@@ -283,7 +371,7 @@ fn run_capture(app: AppHandle) -> Result<()> {
     let stable_win_ms: u64 = 1500;
     let mut stable_vals: VecDeque<(f32, u64)> = VecDeque::with_capacity(256);
 
-    // 可视化事件节流：至少间隔 33ms 发送一次（~30fps）
+    // 可视化事件节流：至少间隔 16ms 发送一次（~60fps）
     let mut last_viz_ms: u64 = 0;
     // 切歌快速重锁相关：截止时间与触发器统计
     let mut fast_relock_deadline: Option<u64> = None;
@@ -347,9 +435,9 @@ fn run_capture(app: AppHandle) -> Result<()> {
                     disp_hist.clear(); ema_disp = None; prev_rms_db = None; anchor_bpm = None; stable_vals.clear();
                     hi_cnt = 0; lo_cnt = 0; tracking = false; ever_locked = false; none_cnt = 0; dev_from_lock_cnt = 0; force_clear_lock = true;
                     // 立即向前端发一次可视化清零，避免残影
-                    let _ = app.emit_to("main", "viz_update", AudioViz { samples: vec![0.0; OUT_LEN], rms: 0.0 });
+                    let _ = app.emit("viz_update", AudioViz { samples: vec![0.0; OUT_LEN], rms: 0.0 });
                     // 告知 0 BPM 状态，直到新数据到来
-                    if let Some(cell) = CURRENT_BPM.get() { if let Ok(mut guard) = cell.lock() { let payload = DisplayBpm { bpm: 0.0, confidence: 0.0, state: "analyzing", level: 0.0 }; *guard = Some(payload); let _ = app.emit_to("main", "bpm_update", payload); } }
+                    if let Some(cell) = CURRENT_BPM.get() { if let Ok(mut guard) = cell.lock() { let payload = DisplayBpm { bpm: 0.0, confidence: 0.0, state: "analyzing", level: 0.0 }; *guard = Some(payload); let _ = app.emit("bpm_update", payload); } }
                 }
             }
             match rx.recv_timeout(Duration::from_millis(20)) {
@@ -364,7 +452,7 @@ fn run_capture(app: AppHandle) -> Result<()> {
                         let silent_cut = 0.015f32;
                         let viz_rms = if rms < silent_cut { 0.0 } else { rms };
                         let nowv = now_ms();
-                        if nowv.saturating_sub(last_viz_ms) >= 33 {
+                        if nowv.saturating_sub(last_viz_ms) >= 16 {
                             if viz_rms == 0.0 {
                                 // 极低电平：波形与 RMS 同步归零
                                 let _ = app.emit_to("main", "viz_update", AudioViz { samples: vec![0.0; OUT_LEN], rms: 0.0 });
@@ -391,7 +479,7 @@ fn run_capture(app: AppHandle) -> Result<()> {
                         }
                     } else {
                         let nowv = now_ms();
-                        if nowv.saturating_sub(last_viz_ms) >= 33 {
+                        if nowv.saturating_sub(last_viz_ms) >= 16 {
                             let _ = app.emit_to("main", "viz_update", AudioViz { samples: vec![0.0; OUT_LEN], rms: 0.0 });
                             last_viz_ms = nowv;
                         }
@@ -405,8 +493,8 @@ fn run_capture(app: AppHandle) -> Result<()> {
                     no_data_ms += 20;
                     // 持续无数据时，仍以 ~30fps 推送零波形与零RMS，避免前端残留上一帧
                     let nowv = now_ms();
-                    if nowv.saturating_sub(last_viz_ms) >= 33 {
-                        let _ = app.emit_to("main", "viz_update", AudioViz { samples: vec![0.0; OUT_LEN], rms: 0.0 });
+                    if nowv.saturating_sub(last_viz_ms) >= 16 {
+                        let _ = app.emit("viz_update", AudioViz { samples: vec![0.0; OUT_LEN], rms: 0.0 });
                         last_viz_ms = nowv;
                     }
                     if no_data_ms >= 1500 {
@@ -416,7 +504,7 @@ fn run_capture(app: AppHandle) -> Result<()> {
                             if let Ok(mut guard) = cell.lock() {
                                 let payload = DisplayBpm { bpm: 0.0, confidence: 0.0, state: "analyzing", level: 0.0 };
                                 *guard = Some(payload);
-                                let _ = app.emit_to("main", "bpm_update", payload);
+                                let _ = app.emit("bpm_update", payload);
                             }
                         }
                         no_data_ms = 0;
@@ -455,7 +543,7 @@ fn run_capture(app: AppHandle) -> Result<()> {
                 if let Ok(mut guard) = cell.lock() {
                     let payload = DisplayBpm { bpm: 0.0, confidence: 0.0, state: "analyzing", level };
                     *guard = Some(payload);
-                    let _ = app.emit_to("main", "bpm_update", payload);
+                    let _ = app.emit("bpm_update", payload);
                 }
             }
             // （已移除 bpm_debug 事件收集）
@@ -966,6 +1054,16 @@ fn main() {
         .plugin(single_instance(|app, _args, _cwd| {
             if let Some(win) = app.get_webview_window("main") { let _ = win.set_focus(); }
         }))
+        .on_window_event(|window, event| {
+            use tauri::WindowEvent;
+            if window.label() == "main" {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    // 关闭主窗口即退出程序
+                    api.prevent_close();
+                    let _ = window.app_handle().exit(0);
+                }
+            }
+        })
         .setup(|app| {
             let handle = app.handle();
             setup_logging(&handle);
@@ -991,9 +1089,6 @@ fn main() {
                             if let Some(win) = app.get_webview_window("logs") {
                                 let _ = win.set_focus();
                             } else {
-                                #[cfg(debug_assertions)]
-                                let url = Url::parse("http://localhost:5173/#logs").unwrap();
-                                #[cfg(not(debug_assertions))]
                                 let url = Url::parse("tauri://localhost/index.html#logs").unwrap();
                                 let title = if is_log_zh() { "分析日志" } else { "Logs" };
                                 let _ = WebviewWindowBuilder::new(app, "logs", WebviewUrl::External(url))
@@ -1008,9 +1103,6 @@ fn main() {
                                 let _ = win.set_focus();
                             } else {
                                 // dev / prod 不同 URL
-                                #[cfg(debug_assertions)]
-                                let url = Url::parse("http://localhost:5173/#about").unwrap();
-                                #[cfg(not(debug_assertions))]
                                 let url = Url::parse("tauri://localhost/index.html#about").unwrap();
                                 let _ = WebviewWindowBuilder::new(app, "about", WebviewUrl::External(url))
                                     .title("About BPM Sniffer")
@@ -1043,25 +1135,10 @@ fn main() {
             }
 
             // 开发模式下显式导航至 Vite 开发服务器，避免资源协议映射异常
-            #[cfg(debug_assertions)]
-            {
-                let app_handle = app.handle().clone();
-                std::thread::spawn(move || {
-                    // 最多等待 ~2.5 秒，直到主窗口可获取
-                    for _ in 0..50 {
-                        if let Some(win) = app_handle.get_webview_window("main") {
-                            if let Ok(url) = Url::parse("http://localhost:5173") {
-                                let _ = win.navigate(url);
-                            }
-                            break;
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(50));
-                    }
-                });
-            }
+            // 不再使用 dev server 导航
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![start_capture, stop_capture, get_current_bpm, set_always_on_top, get_updater_endpoints, get_log_dir, reset_backend, set_log_lang, get_log_lang])
+        .invoke_handler(tauri::generate_handler![start_capture, stop_capture, get_current_bpm, set_always_on_top, get_updater_endpoints, get_log_dir, reset_backend, set_log_lang, get_log_lang, enter_floating, exit_floating, save_float_pos])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

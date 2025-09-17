@@ -5,9 +5,7 @@
   "identifier": "com.renlu.bpm-sniffer",
   "build": {
     "beforeBuildCommand": "pnpm web:build",
-    "beforeDevCommand": "pnpm web:dev",
-    "frontendDist": "dist",
-    "devUrl": "http://localhost:5173"
+    "frontendDist": "dist"
   },
   "app": {
     "withGlobalTauri": true,
@@ -21,17 +19,23 @@
           "windows": [
             "main",
             "about",
-            "logs"
+            "logs",
+            "float"
           ],
           "webviews": [
             "main",
             "about",
-            "logs"
+            "logs",
+            "float"
           ],
           "permissions": [
             "core:default",
             "core:event:allow-listen",
             "core:event:default",
+            "core:window:allow-start-dragging",
+            "core:window:allow-set-position",
+            "core:window:allow-outer-position",
+            "core:window:allow-primary-monitor",
             "updater:default",
             "updater:allow-check",
             "updater:allow-download",
@@ -44,7 +48,7 @@
       {
         "label": "main",
         "title": "BPM Sniffer",
-        "url": "tauri://localhost",
+        "url": "index.html",
         "width": 390,
         "height": 390,
         "resizable": true,
@@ -53,6 +57,20 @@
         "maxWidth": 390,
         "maxHeight": 390,
         "maximizable": false
+      },
+      {
+        "label": "float",
+        "title": "BPM",
+        "url": "index.html#float",
+        "width": 84,
+        "height": 84,
+        "resizable": false,
+        "visible": false,
+        "decorations": false,
+        "shadow": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true
       }
     ]
   },
