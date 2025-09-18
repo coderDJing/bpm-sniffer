@@ -445,12 +445,8 @@ export default function App() {
         <button
           onClick={async () => {
             try {
-              console.log('[UI] enter_floating clicked')
               await invoke('enter_floating')
-              console.log('[UI] enter_floating invoked OK')
-            } catch (e) {
-              console.error('[UI] enter_floating failed', e)
-            }
+            } catch (e) { }
           }}
           title={t('enter_floating')}
           style={{
@@ -599,16 +595,13 @@ function FloatBall({ themeName, bpm, conf, viz, onExit }: { themeName: 'dark'|'l
           const win = getCurrentWebviewWindow()
           // 双保险：先尝试系统拖动；若失败则手动移动到光标附近（需要 window 权限）
           try { await win.startDragging() } catch (e) {
-            console.warn('[Float] startDragging failed, fallback to setPosition', e)
             try {
               const x = Math.max(0, ev.screenX - Math.floor(ballSize/2))
               const y = Math.max(0, ev.screenY - Math.floor(ballSize/2))
               // @ts-ignore 支持 Tauri v2 setPosition(Position)
               await (win as any).setPosition({ x, y })
               try { await (window as any).__TAURI_INVOKE__('save_float_pos', { x, y }) } catch {}
-            } catch (e2) {
-              console.error('[Float] setPosition fallback failed', e2)
-            }
+            } catch (e2) { }
           }
         } catch {}
         window.removeEventListener('pointermove', onMove)

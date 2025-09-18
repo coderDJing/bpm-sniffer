@@ -6,6 +6,29 @@
     <title>BPM Sniffer</title>
   </head>
   <body>
+    <style>
+      html, body { height: 100%; margin: 0; padding: 0; }
+    </style>
+    <script>
+      (function(){
+        function applyBg(){
+          var isFloat = location.hash === '#float';
+          var elHtml = document.documentElement, elBody = document.body;
+          if (isFloat) {
+            elHtml.style.background = 'transparent';
+            elBody.style.background = 'transparent';
+          } else {
+            var isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            var dark = '#14060a', light = '#fff4f7';
+            var bg = isDark ? dark : light;
+            elHtml.style.background = bg;
+            elBody.style.background = bg;
+          }
+        }
+        applyBg();
+        window.addEventListener('hashchange', applyBg);
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

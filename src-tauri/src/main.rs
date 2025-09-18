@@ -195,10 +195,7 @@ fn set_always_on_top(app: AppHandle, on_top: bool) -> Result<(), String> {
 #[tauri::command]
 fn enter_floating(app: AppHandle) -> Result<(), String> {
     // 创建悬浮球窗口（透明、无边框、置顶、隐藏任务栏）
-    append_log_line("[FLOAT] enter_floating invoked");
-    eprintln!("[FLOAT] enter_floating invoked");
     // 切回“独立透明窗口”方案：新建 float 窗口 + 透明 + 无边框 + 置顶
-    eprintln!("[FLOAT] creating dedicated transparent window");
     // 使用 App 协议，dev 模式会自动映射到 dev 服务器
     // 如果在配置中已声明 float 窗口，则直接获取并显示
     if let Some(w) = app.get_webview_window("float") {
@@ -220,12 +217,9 @@ fn enter_floating(app: AppHandle) -> Result<(), String> {
         let _ = w.navigate(Url::parse("tauri://localhost/index.html#float").unwrap_or_else(|_| Url::parse("tauri://localhost/#float").unwrap()));
         let _ = w.show();
         let _ = w.set_focus();
-        eprintln!("[FLOAT] show float window");
-        append_log_line("[FLOAT] show float window");
     } else {
         // 理论上不会发生（预声明的 float 始终存在且我们不再关闭它）
-        eprintln!("[FLOAT] WARN: float window not found (should be pre-declared)");
-        append_log_line("[FLOAT] WARN: float window not found (should be pre-declared)");
+        // 静默处理：若未找到浮窗，跳过
     }
     // 隐藏主窗口，避免任务栏占位（如果主窗口尚未创建则忽略）
     if let Some(main) = app.get_webview_window("main") {
@@ -237,13 +231,9 @@ fn enter_floating(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn exit_floating(app: AppHandle) -> Result<(), String> {
-    append_log_line("[FLOAT] exit_floating invoked");
-    eprintln!("[FLOAT] exit_floating invoked");
     // 不再关闭浮窗，改为仅隐藏
     if let Some(f) = app.get_webview_window("float") { let _ = f.hide(); }
     if let Some(main) = app.get_webview_window("main") {
-        append_log_line("[FLOAT] restore MAIN from floating style");
-        eprintln!("[FLOAT] restore MAIN from floating style");
         let _ = main.set_decorations(true);
         let _ = main.set_resizable(true);
         let _ = main.set_skip_taskbar(false);
@@ -251,15 +241,23 @@ fn exit_floating(app: AppHandle) -> Result<(), String> {
         let _ = main.set_min_size(Some(Size::Logical(LogicalSize::new(220.0, 120.0))));
         let _ = main.set_max_size(Some(Size::Logical(LogicalSize::new(560.0, 560.0))));
         let _ = main.set_size(Size::Logical(LogicalSize::new(390.0, 390.0)));
-        #[cfg(debug_assertions)]
-        { let _ = main.navigate(Url::parse("tauri://localhost/").unwrap()); }
-        #[cfg(not(debug_assertions))]
-        { let _ = main.navigate(Url::parse("tauri://localhost/index.html").unwrap()); }
         let _ = main.show();
+        // 尝试通过 1px 尺寸抖动强制 WebView2 重绘，缓解偶发黑/白屏
+        if let (Ok(sz), Ok(sf)) = (main.inner_size(), main.scale_factor()) {
+            let w_log = (sz.width as f64) / sf;
+            let h_log = (sz.height as f64) / sf;
+            let _ = main.set_size(Size::Logical(LogicalSize::new(w_log + 1.0, h_log)));
+            let app2 = app.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(30));
+                if let Some(win2) = app2.get_webview_window("main") {
+                    let _ = win2.set_size(Size::Logical(LogicalSize::new(w_log, h_log)));
+                }
+            });
+        }
         let _ = main.set_focus();
     } else {
-        append_log_line("[FLOAT] ERROR: main window not found on exit");
-        eprintln!("[FLOAT] ERROR: main window not found on exit");
+        // 静默处理：若未找到主窗口，跳过
     }
     Ok(())
 }
