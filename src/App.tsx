@@ -292,7 +292,7 @@ export default function App() {
 
   if (route === '#float') {
     return (
-      <FloatBall themeName={themeName} bpm={bpmRef.current ?? 0} conf={conf} viz={viz} onExit={async () => { try { await invoke('exit_floating') } catch {} }} />
+      <FloatBall themeName={themeName} bpm={bpmRef.current ?? 0} conf={conf} viz={viz} onExit={async () => { try { await invoke('exit_floating') } catch {} }} isLockedHighlight={isLockedHighlight} />
     )
   }
 
@@ -477,7 +477,7 @@ export default function App() {
   )
 }
 
-function FloatBall({ themeName, bpm, conf, viz, onExit }: { themeName: 'dark'|'light', bpm: number, conf: number | null, viz: AudioViz | null, onExit: () => Promise<void> }) {
+function FloatBall({ themeName, bpm, conf, viz, onExit, isLockedHighlight }: { themeName: 'dark'|'light', bpm: number, conf: number | null, viz: AudioViz | null, onExit: () => Promise<void>, isLockedHighlight: boolean }) {
   const darkTheme = {
     background: 'rgba(20,6,10,0.82)',
     textPrimary: '#ffffff',
@@ -629,11 +629,10 @@ function FloatBall({ themeName, bpm, conf, viz, onExit }: { themeName: 'dark'|'l
   }
 
   const confGray = themeName === 'dark' ? '#9aa3ab' : '#8a8f96'
-  const isHigh = conf != null && conf >= 0.5
-  const color = isHigh ? theme.textPrimary : confGray
+  const color = isLockedHighlight ? theme.textPrimary : (conf == null ? confGray : (conf >= 0.5 ? theme.textPrimary : confGray))
   const fontPx = 22
   const rootStyle: React.CSSProperties = {height:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'transparent', cursor:'default'}
-  const textStyle: React.CSSProperties = {fontSize:fontPx,fontWeight:700,color,letterSpacing:1,lineHeight:1}
+  const textStyle: React.CSSProperties = {fontSize:fontPx,fontWeight:700,color,letterSpacing:1,lineHeight:fontPx + 'px'}
   return (
     <main style={rootStyle}>
       <div
