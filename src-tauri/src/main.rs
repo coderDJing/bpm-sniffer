@@ -446,14 +446,14 @@ fn run_capture(app: AppHandle) -> Result<()> {
                         let mut rms_acc = 0.0f32;
                         for &v in &buf { rms_acc += v * v; }
                         let rms = (rms_acc / len as f32).sqrt().min(1.0);
-                        // 可视化 RMS：对极低电平直接视为静音，立即归零
+                        // 可视化 RMS：对极低电平，仅将波形清零，但 RMS 仍上报真实值，避免前端卡在“等待声音”
                         let silent_cut = 0.015f32;
-                        let viz_rms = if rms < silent_cut { 0.0 } else { rms };
+                        let viz_rms = rms;
                         let nowv = now_ms();
                         if nowv.saturating_sub(last_viz_ms) >= 16 {
-                            if viz_rms == 0.0 {
-                                // 极低电平：波形与 RMS 同步归零
-                                let _ = app.emit_to("main", "viz_update", AudioViz { samples: vec![0.0; OUT_LEN], rms: 0.0 });
+                            if rms < silent_cut {
+                                // 极低电平：波形归零，但 RMS 保留真实值用于前端阈值判断
+                                let _ = app.emit_to("main", "viz_update", AudioViz { samples: vec![0.0; OUT_LEN], rms: viz_rms });
                             } else {
                                 // 下采样生成可视化波形
                                 let step = (len as f32 / OUT_LEN as f32).max(1.0);

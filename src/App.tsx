@@ -70,6 +70,7 @@ export default function App() {
   const silenceTriggeredRef = useRef<boolean>(false)
   // “等待声音”显示去抖：仅当连续静音超过 WAIT_MS 才显示
   const [showWaiting, setShowWaiting] = useState<boolean>(false)
+  const showWaitingRef = useRef<boolean>(false)
   const SILENT_LABEL_WAIT_MS = 1500
   const SILENT_ENTER_THR = 0.0 // 后端已把极低电平折算为 0
   const SILENT_EXIT_THR = 0.01 // 退出等待需要略高一些，形成回滞，减少抖动
@@ -196,14 +197,14 @@ export default function App() {
         const unlistenD = await listen<AudioViz>('viz_update', async (e) => {
           const payload = e.payload as any as AudioViz
           setViz(payload)
-          // 基于 RMS 判断是否静音：后端已在极低电平时将 rms 置 0
+          // 基于 RMS 判断是否静音
           const rms = payload?.rms ?? 0
           const nowTs = Date.now()
           // 去抖逻辑：
           if (rms > SILENT_EXIT_THR) {
             lastNonSilentAtRef.current = nowTs
             silenceTriggeredRef.current = false
-            if (showWaiting) setShowWaiting(false)
+            if (showWaitingRef.current) { setShowWaiting(false); showWaitingRef.current = false }
           } else {
             const SILENT_TIMEOUT_MS = 10000
             if (!silenceTriggeredRef.current && (nowTs - lastNonSilentAtRef.current >= SILENT_TIMEOUT_MS)) {
@@ -211,8 +212,8 @@ export default function App() {
               await doRefresh()
             }
             // 连续静音达到阈值才显示“等待声音”
-            if (!showWaiting && rms <= SILENT_ENTER_THR && (nowTs - lastNonSilentAtRef.current >= SILENT_LABEL_WAIT_MS)) {
-              setShowWaiting(true)
+            if (!showWaitingRef.current && rms <= SILENT_ENTER_THR && (nowTs - lastNonSilentAtRef.current >= SILENT_LABEL_WAIT_MS)) {
+              setShowWaiting(true); showWaitingRef.current = true
             }
           }
         })
