@@ -29,6 +29,7 @@ const dict: Dict = {
   state_tracking: { 'zh-CN': '节拍稳定', en: 'Stable' },
   state_analyzing: { 'zh-CN': '分析中', en: 'Analyzing' },
   state_uncertain: { 'zh-CN': '节拍不稳', en: 'Unstable' },
+  state_waiting_audio: { 'zh-CN': '等待声音', en: 'Waiting audio' },
   conf_label: { 'zh-CN': '置信度：', en: 'Conf: ' },
   conf_stable: { 'zh-CN': '稳定', en: 'High' },
   conf_medium: { 'zh-CN': '较稳', en: 'Med' },

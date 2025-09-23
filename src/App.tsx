@@ -65,6 +65,35 @@ export default function App() {
   }
   const theme = themeName === 'dark' ? darkTheme : lightTheme
 
+  // 静音计时：10 秒无声则触发一次前端刷新（归零）
+  const lastNonSilentAtRef = useRef<number>(Date.now())
+  const silenceTriggeredRef = useRef<boolean>(false)
+  // “等待声音”显示去抖：仅当连续静音超过 WAIT_MS 才显示
+  const [showWaiting, setShowWaiting] = useState<boolean>(false)
+  const SILENT_LABEL_WAIT_MS = 1500
+  const SILENT_ENTER_THR = 0.0 // 后端已把极低电平折算为 0
+  const SILENT_EXIT_THR = 0.01 // 退出等待需要略高一些，形成回滞，减少抖动
+
+  // 归零即刷新：抽取公共方法，供按钮与静音超时复用
+  async function doRefresh() {
+    if (refreshSpin) return
+    setRefreshSpin(true)
+    try {
+      // 清空前端可见状态
+      setBpm(null); bpmRef.current = null
+      setConf(null)
+      setState('analyzing')
+      setViz(null)
+      highlightLockRef.current = { locked: false, bpm: null }
+      lowConfStreakRef.current = { bpm: null, count: 0 }
+      // 通知后端软重置
+      try { await invoke('reset_backend') } catch {}
+    } finally {
+      // 启动一次 360° 顺时针旋转动画
+      setTimeout(() => setRefreshSpin(false), 420)
+    }
+  }
+
   useEffect(() => {
     let removeListener: (() => void) | null = null
     let removeMql: (() => void) | null = null
@@ -164,8 +193,28 @@ export default function App() {
             bpmRef.current = res.bpm
           }
         })
-        const unlistenD = await listen<AudioViz>('viz_update', (e) => {
-          setViz(e.payload as any as AudioViz)
+        const unlistenD = await listen<AudioViz>('viz_update', async (e) => {
+          const payload = e.payload as any as AudioViz
+          setViz(payload)
+          // 基于 RMS 判断是否静音：后端已在极低电平时将 rms 置 0
+          const rms = payload?.rms ?? 0
+          const nowTs = Date.now()
+          // 去抖逻辑：
+          if (rms > SILENT_EXIT_THR) {
+            lastNonSilentAtRef.current = nowTs
+            silenceTriggeredRef.current = false
+            if (showWaiting) setShowWaiting(false)
+          } else {
+            const SILENT_TIMEOUT_MS = 10000
+            if (!silenceTriggeredRef.current && (nowTs - lastNonSilentAtRef.current >= SILENT_TIMEOUT_MS)) {
+              silenceTriggeredRef.current = true
+              await doRefresh()
+            }
+            // 连续静音达到阈值才显示“等待声音”
+            if (!showWaiting && rms <= SILENT_ENTER_THR && (nowTs - lastNonSilentAtRef.current >= SILENT_LABEL_WAIT_MS)) {
+              setShowWaiting(true)
+            }
+          }
         })
         removeListener = () => { if (removeMql) removeMql(); unlistenA(); unlistenD() }
       } catch (err) { console.error(tn('[启动] 错误', '[BOOT] error'), err) }
@@ -230,8 +279,8 @@ export default function App() {
   const confLabel = isLockedHighlight ? t('conf_stable') : baseConfLabel
   const confColor = isLockedHighlight ? theme.textPrimary : baseConfColor
   const bpmColor = isLockedHighlight ? theme.textPrimary : (conf == null ? theme.confGray : (conf >= 0.5 ? theme.textPrimary : theme.confGray))
-  // 状态标签“节拍不稳”在锁定时显示为“追踪中”，但“分析中”优先级最高，始终显示“分析中”
-  const label = state === 'analyzing' ? t('state_analyzing') : (isLockedHighlight ? t('state_tracking') : baseLabel)
+  // 状态标签：当静音去抖成立时显示“等待声音”；其余规则保持不变
+  const label = showWaiting ? t('state_waiting_audio') : (state === 'analyzing' ? t('state_analyzing') : (isLockedHighlight ? t('state_tracking') : baseLabel))
 
   // 已固定后端为基础模式，无切换
 
