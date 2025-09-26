@@ -214,6 +214,11 @@ fn enter_floating(app: AppHandle) -> Result<(), String> {
             let y = pos.y + margin;
             let _ = w.set_position(Position::Physical(PhysicalPosition::new(x, y)));
         }
+        // 保持悬浮球窗口为正方形：将宽度设置为当前高度对应的逻辑尺寸
+        if let (Ok(sz), Ok(sf)) = (w.inner_size(), w.scale_factor()) {
+            let h_log = (sz.height as f64) / sf;
+            let _ = w.set_size(Size::Logical(LogicalSize::new(h_log, h_log)));
+        }
         let _ = w.navigate(Url::parse("tauri://localhost/index.html#float").unwrap_or_else(|_| Url::parse("tauri://localhost/#float").unwrap()));
         let _ = w.show();
         let _ = w.set_focus();
