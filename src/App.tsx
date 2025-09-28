@@ -1081,21 +1081,22 @@ function VizPanel({ theme, hideRms, viz, mode, onToggle, themeName }: { theme: a
         )}
       </div>
       {!hideRms && (
-        <div title={t('rms_tooltip')} style={{display:'flex', alignItems:'center', gap:8, height:14}}>
-          {(() => {
-            const paddingX = isFullscreen ? 0 : 5
-            const svgW = Math.max(10, w - paddingX * 2)
-            const barLen = Math.round(rmsSmoothedRef.current * Math.max(0, svgW - 60))
-            return (
-              <div style={{width:Math.max(60, svgW-60), height:8, background:'#3a0b17', borderRadius:4, overflow:'hidden'}}>
-                <div style={{width:barLen, height:'100%', background:accent, transition:'width 120ms'}} />
+        (() => {
+          const paddingX = isFullscreen ? 0 : 5
+          const svgW = Math.max(10, w - paddingX * 2)
+          const trackW = Math.max(60, svgW - 60)
+          const fillW = Math.max(0, Math.min(trackW, Math.round(rmsSmoothedRef.current * trackW)))
+          return (
+            <div title={t('rms_tooltip')} style={{display:'flex', alignItems:'center', gap:8, height:14, width:svgW, margin:'0 auto'}}>
+              <div style={{width:trackW, height:8, background:'#3a0b17', borderRadius:4, overflow:'hidden'}}>
+                <div style={{width:fillW, height:'100%', background:accent, transition:'width 120ms'}} />
               </div>
-            )
-          })()}
-          <span style={{fontSize:12, lineHeight:'14px', color:'#6b829e'}}>
-            RMS {Math.round(rmsSmoothedRef.current*100)}%
-          </span>
-        </div>
+              <span style={{fontSize:12, lineHeight:'14px', color:'#6b829e'}}>
+                RMS {Math.round(rmsSmoothedRef.current*100)}%
+              </span>
+            </div>
+          )
+        })()
       )}
     </div>
   )
