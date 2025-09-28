@@ -861,7 +861,7 @@ function VizPanel({ theme, hideRms, viz, mode, onToggle, themeName }: { theme: a
   const baseVizH = 120
   const vh = typeof window !== 'undefined' ? window.innerHeight : baseWindowH
   const h = Math.max(100, Math.min(300, Math.floor(baseVizH + Math.max(0, vh - baseWindowH) * 0.7)))
-  const w = Math.max(180, Math.floor(window.innerWidth - 10))
+  const w = Math.max(180, Math.floor(window.innerWidth))
   const bg = theme.panelBg
   const grid = theme.grid
   const line = theme.line
@@ -926,51 +926,8 @@ function VizPanel({ theme, hideRms, viz, mode, onToggle, themeName }: { theme: a
   let gain = 0.6 / base
   gain = Math.max(0.8, Math.min(2.2, gain))
 
-  // Waterfall：把每帧样本折叠成 bands 段能量（历史用 ref）
+  // Waterfall 历史与参数占位（自适应将在计算有效高度后进行）
   const histRef = React.useRef<number[][]>([])
-  const bands = 16
-  const scrollMul = 6
-  const gap = 1
-  // 目标：在高度变化时保持与默认高度时一致的上下留白，同时自适应填充可用空间
-  const baseCell = 4
-  const baseH = baseVizH
-  const baseContentH = Math.min(baseH, bands * (baseCell + gap) + gap)
-  const idealPaddingY = Math.max(0, Math.floor((baseH - baseContentH) / 2))
-  const targetContentH = Math.max(10, h - idealPaddingY * 2)
-  const cell = Math.max(2, Math.min(16, Math.floor((targetContentH - gap) / bands - gap)))
-  const visibleCols = Math.max(1, Math.floor((w - gap) / (cell + gap)))
-  const wfW = Math.min(w, visibleCols * (cell + gap) + gap)
-  const wfH = Math.min(h, bands * (cell + gap) + gap)
-  const wfOffsetX = Math.max(0, Math.floor((w - wfW) / 2))
-  // 以默认上下留白 idealPaddingY 为基线，尽量把因取整产生的剩余高度对称分配到上下
-  const extraY = Math.max(0, Math.floor((h - 2 * idealPaddingY - wfH) / 2))
-  const wfOffsetY = Math.max(0, idealPaddingY + extraY)
-  const maxHistory = 600
-  // 将一帧样本折叠为 bands 段能量
-  const frameBands = React.useMemo(() => {
-    const out = new Array(bands).fill(0)
-    if (!smoothSamples.length) return out
-    const step = Math.max(1, Math.floor(smoothSamples.length / bands))
-    for (let b = 0; b < bands; b++) {
-      const i0 = b * step
-      const i1 = Math.min(smoothSamples.length, i0 + step)
-      let acc = 0, cnt = 0
-      for (let i = i0; i < i1; i++) { acc += Math.abs(smoothSamples[i] || 0); cnt++ }
-      const v = cnt ? acc / cnt : 0
-      out[b] = Math.min(1, v * gain)
-    }
-    return out
-  }, [smoothSamples, gain])
-  // 维护历史（右侧为最新），按 scrollMul 倍速推进（不变稀疏：仅推进历史，不减少可见列）
-  React.useEffect(() => {
-    if (!frameBands.length) return
-    let next = histRef.current.slice()
-    for (let i = 0; i < scrollMul; i++) {
-      next.push(frameBands)
-    }
-    if (next.length > maxHistory) next = next.slice(next.length - maxHistory)
-    histRef.current = next
-  }, [frameBands])
   function heatColor(v: number) {
     // 强化对比度但保持原色系：
     // 低 -> #24060d, 中(≈#eb1a50) -> 高 -> #ffd6e1
@@ -993,7 +950,7 @@ function VizPanel({ theme, hideRms, viz, mode, onToggle, themeName }: { theme: a
       return `rgb(${r},${g},${b})`
     }
   }
-  const barLen = Math.round(rmsSmoothedRef.current * (w - 60))
+  // barLen 延后基于 svgW 计算
   // 全屏图标显隐与全屏控制
   const containerRef = React.useRef<HTMLDivElement | null>(null)
   const [hovered, setHovered] = React.useState(false)
@@ -1022,34 +979,82 @@ function VizPanel({ theme, hideRms, viz, mode, onToggle, themeName }: { theme: a
   const effectiveH = isFullscreen
     ? Math.max(100, Math.floor(fullH - (hideRms ? 20 : 36)))
     : h
-  // 全屏下为 Waterfall 重新计算 cell 与偏移，确保垂直适配
+  // 依据有效高度自适应 Waterfall 的 bands 与 cell，并重新计算垂直偏移
+  const gap = 1
+  const baseH = baseVizH
+  const baseBands = 16
+  // 高度越大频带越多：从 16 线性增加到 24（最长到 32），避免过密
+  const scaleH = Math.max(0, Math.min(1, (effectiveH - 120) / 360))
+  const bands = Math.max(8, Math.min(32, Math.round(baseBands + scaleH * 8)))
+  const baseCell = 4
+  const baseContentH = Math.min(baseH, bands * (baseCell + gap) + gap)
+  const idealPaddingY = Math.max(0, Math.floor((baseH - baseContentH) / 2))
   const targetContentH2 = Math.max(10, effectiveH - idealPaddingY * 2)
   const cell2 = Math.max(2, Math.min(16, Math.floor((targetContentH2 - gap) / bands - gap)))
-  const visibleCols2 = Math.max(1, Math.floor((w - gap) / (cell2 + gap)))
-  const wfW2 = Math.min(w, visibleCols2 * (cell2 + gap) + gap)
   const wfH2 = Math.min(effectiveH, bands * (cell2 + gap) + gap)
   const extraY2 = Math.max(0, Math.floor((effectiveH - 2 * idealPaddingY - wfH2) / 2))
   const wfOffsetYEffective = Math.max(0, idealPaddingY + extraY2)
+
+  // 将一帧样本折叠为自适应 bands 段能量
+  const frameBands = React.useMemo(() => {
+    const out = new Array(bands).fill(0)
+    if (!smoothSamples.length) return out
+    const step = Math.max(1, Math.floor(smoothSamples.length / bands))
+    for (let b = 0; b < bands; b++) {
+      const i0 = b * step
+      const i1 = Math.min(smoothSamples.length, i0 + step)
+      let acc = 0, cnt = 0
+      for (let i = i0; i < i1; i++) { acc += Math.abs(smoothSamples[i] || 0); cnt++ }
+      const v = cnt ? acc / cnt : 0
+      out[b] = Math.min(1, v * gain)
+    }
+    return out
+  }, [smoothSamples, gain, bands])
+
+  // 维护历史（右侧为最新），按固定滚动倍速推进；当 bands 变化时不回溯转换历史，仅按新 bands 写入
+  const scrollMul = 6
+  const maxHistory = 600
+  React.useEffect(() => {
+    if (!frameBands.length) return
+    let next = histRef.current.slice()
+    for (let i = 0; i < scrollMul; i++) next.push(frameBands)
+    if (next.length > maxHistory) next = next.slice(next.length - maxHistory)
+    histRef.current = next
+  }, [frameBands])
+  const visibleCols2 = Math.max(1, Math.floor((w - gap) / (cell2 + gap)))
+
+  // 按宽度自适应柱状图根数：目标单元宽度（含1px间隙）约 5px，限制区间 [32, 256]
+  const targetCellPx = 5
+  const barsCount = Math.max(32, Math.min(256, Math.floor(w / targetCellPx)))
 
   return (
     <div
       ref={containerRef}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      style={{width:w, display:'flex', flexDirection:'column', gap:6, padding:'0 5px'}}
+      style={{width:w, display:'flex', flexDirection:'column', gap:6, padding:0}}
     >
       <div style={{position:'relative'}}>
-        <svg width={w-10} height={effectiveH} style={{background:bg, border:'1px solid #1d2a3a', borderRadius:6, cursor:'pointer', display:'block'}} onClick={onToggle}>
-        {mode === 'wave' && (
-          <WaveViz width={w-10} height={effectiveH} samples={smoothSamples} gain={gain} gridColor={grid} lineColor={line} />
-        )}
-        {mode === 'bars' && (
-          <BarsViz width={w-10} height={effectiveH} samples={smoothSamples} gain={gain} barColor={line} />
-        )}
-        {mode === 'waterfall' && (
-          <WaterfallViz width={w-10} height={effectiveH} bands={bands} gap={gap} cell={cell2} history={histRef.current} heatColor={heatColor} overrideOffsetY={wfOffsetYEffective} />
-        )}
-        </svg>
+        {(() => {
+          const paddingX = isFullscreen ? 0 : 5
+          const svgW = Math.max(10, w - paddingX * 2)
+          return (
+            <svg width={svgW} height={effectiveH} style={{background:bg, border:'1px solid #1d2a3a', borderRadius:6, cursor:'pointer', display:'block', margin:'0 auto'}} onClick={onToggle}>
+              {mode === 'wave' && (
+                <WaveViz width={svgW} height={effectiveH} samples={smoothSamples} gain={gain} gridColor={grid} lineColor={line} />
+              )}
+              {mode === 'bars' && (() => {
+                const barGap = 1
+                const minBarW = 2
+                const barsWanted = Math.max(32, Math.min(2048, Math.floor((svgW + barGap) / (minBarW + barGap))))
+                return <BarsViz width={svgW} height={effectiveH} samples={smoothSamples} gain={gain} barColor={line} bars={barsWanted} />
+              })()}
+              {mode === 'waterfall' && (
+                <WaterfallViz width={svgW} height={effectiveH} bands={bands} gap={gap} cell={cell2} cellX={Math.max(2, Math.min(8, Math.round(cell2)))} history={histRef.current} heatColor={heatColor} overrideOffsetY={wfOffsetYEffective} />
+              )}
+            </svg>
+          )
+        })()}
         {/* 悬浮全屏图标 */}
         {!isFullscreen && (
           <button
@@ -1077,9 +1082,16 @@ function VizPanel({ theme, hideRms, viz, mode, onToggle, themeName }: { theme: a
       </div>
       {!hideRms && (
         <div title={t('rms_tooltip')} style={{display:'flex', alignItems:'center', gap:8, height:14}}>
-          <div style={{width:Math.max(60, w-70), height:8, background:'#3a0b17', borderRadius:4, overflow:'hidden'}}>
-            <div style={{width:barLen, height:'100%', background:accent, transition:'width 120ms'}} />
-          </div>
+          {(() => {
+            const paddingX = isFullscreen ? 0 : 5
+            const svgW = Math.max(10, w - paddingX * 2)
+            const barLen = Math.round(rmsSmoothedRef.current * Math.max(0, svgW - 60))
+            return (
+              <div style={{width:Math.max(60, svgW-60), height:8, background:'#3a0b17', borderRadius:4, overflow:'hidden'}}>
+                <div style={{width:barLen, height:'100%', background:accent, transition:'width 120ms'}} />
+              </div>
+            )
+          })()}
           <span style={{fontSize:12, lineHeight:'14px', color:'#6b829e'}}>
             RMS {Math.round(rmsSmoothedRef.current*100)}%
           </span>

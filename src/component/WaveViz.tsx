@@ -13,13 +13,40 @@ export default function WaveViz({ width, height, samples, gain, gridColor, lineC
   const mid = Math.floor(height / 2)
   const clamped = (v: number) => Math.max(-1, Math.min(1, v))
   const path = React.useMemo(() => {
-    if (!samples.length) return ''
-    const n = Math.max(1, samples.length - 1)
-    let segs: string[] = []
-    for (let i = 0; i < samples.length; i++) {
-      const x = Math.round((i / n) * (width - 1))
-      const y = mid - Math.round(clamped(samples[i] || 0) * gain * (height * 0.40))
-      segs.push(`${i === 0 ? 'M' : 'L'}${x},${y}`)
+    if (!samples.length || width <= 1) return ''
+    const dpr = (typeof window !== 'undefined') ? Math.max(1, (window as any).devicePixelRatio || 1) : 1
+    const targetPoints = Math.max(2, Math.floor(width * dpr))
+    const srcLen = samples.length
+    const segs: string[] = []
+
+    // 当源点数远大于像素时，做分箱平均；否则做线性插值，保证不同宽度下一致的视觉密度
+    const useBinning = srcLen >= targetPoints
+    if (useBinning) {
+      const binSize = srcLen / (targetPoints - 1)
+      for (let xi = 0; xi < targetPoints; xi++) {
+        const start = Math.floor(Math.max(0, Math.min(srcLen - 1, xi * binSize)))
+        const end = Math.floor(Math.max(0, Math.min(srcLen, (xi + 1) * binSize)))
+        let acc = 0, cnt = 0
+        for (let i = start; i < Math.max(start + 1, end); i++) { acc += samples[i] || 0; cnt++ }
+        const v = cnt ? acc / cnt : 0
+        const x = xi / dpr
+        const y = mid - (clamped(v) * gain * (height * 0.40))
+        segs.push(`${xi === 0 ? 'M' : 'L'}${x},${y}`)
+      }
+    } else {
+      for (let xi = 0; xi < targetPoints; xi++) {
+        const u = xi / (targetPoints - 1)
+        const s = u * (srcLen - 1)
+        const i0 = Math.floor(s)
+        const i1 = Math.min(srcLen - 1, i0 + 1)
+        const t = s - i0
+        const v0 = samples[i0] || 0
+        const v1 = samples[i1] || 0
+        const v = v0 * (1 - t) + v1 * t
+        const x = xi / dpr
+        const y = mid - (clamped(v) * gain * (height * 0.40))
+        segs.push(`${xi === 0 ? 'M' : 'L'}${x},${y}`)
+      }
     }
     return segs.join(' ')
   }, [samples, gain, width, height, mid])

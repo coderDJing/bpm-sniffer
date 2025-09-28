@@ -6,29 +6,31 @@ type WaterfallVizProps = {
   bands: number
   gap: number
   cell: number
+  cellX?: number
   history: number[][]
   heatColor: (v: number) => string
   overrideOffsetY?: number
 }
 
-export default function WaterfallViz({ width, height, bands, gap, cell, history, heatColor, overrideOffsetY }: WaterfallVizProps) {
-  const visibleCols = Math.max(1, Math.floor((width - gap) / (cell + gap)))
-  const wfW = Math.min(width, visibleCols * (cell + gap) + gap)
+export default function WaterfallViz({ width, height, bands, gap, cell, cellX, history, heatColor, overrideOffsetY }: WaterfallVizProps) {
+  // 纵向由 cell 控制；横向使用固定单元宽度 cellX（默认等于 cell）来决定可见列数
+  const cx = Math.max(1, Math.floor((cellX ?? cell)))
+  const visibleCols = Math.max(1, Math.floor((width - gap) / (cx + gap)))
+  const cols = visibleCols
   const wfH = Math.min(height, bands * (cell + gap) + gap)
-  const wfOffsetX = Math.max(0, Math.floor((width - wfW) / 2))
   const wfOffsetY = overrideOffsetY != null ? overrideOffsetY : Math.max(0, Math.floor((height - wfH) / 2))
-
-  const cols = Math.min(history.length, visibleCols)
-  const startX = wfOffsetX + (wfW - gap - cols * (cell + gap))
+  // 居中绘制，左右保持对称 gap
+  const totalW = gap + cols * (cx + gap)
+  const startX = Math.max(0, Math.floor((width - totalW) / 2))
   const elems: JSX.Element[] = []
   for (let x = 0; x < cols; x++) {
     const idx = history.length - cols + x
-    const bandsVals = history[idx]
+    const bandsVals = (idx >= 0 && idx < history.length) ? history[idx] : null
     for (let b = 0; b < bands; b++) {
       const v = bandsVals ? bandsVals[b] || 0 : 0
-      const cx = startX + gap + x * (cell + gap)
+      const px = startX + gap + x * (cx + gap)
       const cy = wfOffsetY + gap + (bands - 1 - b) * (cell + gap)
-      elems.push(<rect key={`${x}-${b}`} x={cx} y={cy} width={cell} height={cell} fill={heatColor(v)} opacity={1} />)
+      elems.push(<rect key={`${x}-${b}`} x={px} y={cy} width={cx} height={cell} fill={heatColor(v)} opacity={1} />)
     }
   }
   return <>{elems}</>
