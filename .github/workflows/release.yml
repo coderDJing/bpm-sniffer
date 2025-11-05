@@ -91,7 +91,14 @@ jobs:
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const tag = context.ref_name;
+            let tag = context.ref_name || '';
+            if ((!tag || !tag.length) && context.ref && context.ref.startsWith('refs/tags/')) {
+              tag = context.ref.substring('refs/tags/'.length);
+            }
+            if (!tag || !tag.length) {
+              core.setFailed('无法解析当前构建对应的 tag 名称。');
+              return;
+            }
             const patterns = [
               /latest\.json$/,
               /_x64-setup\.exe$/,
