@@ -37,12 +37,13 @@
 - **更稳的数字**：针对切歌与弱节奏做了稳定化与抗抖动处理。
 - **可视化**：点击波形面板可在「波形/柱状/瀑布」三种模式间切换。
 - **置顶与主题**：右上角图钉可置顶窗口；可切换明/暗主题。
-- **自动更新（可选）**：有新版本会静默下载，重启后生效。
+- **自动更新（可选）**：仅正式版（如 `v1.2.3`）支持 OTA，预发布需手动安装。
 - **中英文界面**：自动跟随系统语言（简体中文 / English）。
 
 ### 下载与安装
 
 - 前往发布页的 latest 下载 Windows 安装包（NSIS）：[Releases · coderDJing/bpm-sniffer](https://github.com/coderDJing/bpm-sniffer/releases/latest)。
+
 
 ### 如何使用
 
@@ -84,6 +85,9 @@ pnpm build
 ```
 
 - 安装包输出：`src-tauri/target/release/bundle/nsis/`
+- 打 Tag 规则：
+  - 推送 `vX.Y.Z` 触发正式版（支持 OTA）。
+  - 推送包含 `-` 的 `vX.Y.Z-后缀` 触发预发布（需手动安装）。
 
 算法与实现：详见 [算法原理与流程](../doc/算法原理与流程.md)。
 

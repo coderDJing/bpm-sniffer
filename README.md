@@ -37,12 +37,13 @@ Supports bilingual UI (Simplified Chinese / English). The language follows your 
 - **Stable readings**: Stabilization and anti-jitter for track changes and weak beats.
 - **Visualizations**: Click on the waveform panel to switch among Waveform / Bar / Spectrogram.
 - **Pin & theme**: Use the pushpin to toggle always-on-top; switch between light and dark themes.
-- **Auto updates (optional)**: New versions download silently and take effect after restart.
+- **Auto updates (optional)**: Only stable builds (tags like `v1.2.3`) receive OTA updates; pre-release builds must be updated manually.
 - **Bilingual UI**: Follows system language (Simplified Chinese / English).
 
 ### Download & Install
 
 - Go to the latest release page and download the Windows installer (NSIS): [Releases · coderDJing/bpm-sniffer](https://github.com/coderDJing/bpm-sniffer/releases/latest).
+
 
 ### How to Use
 
@@ -84,6 +85,9 @@ pnpm build
 ```
 
 - Installer output: `src-tauri/target/release/bundle/nsis/`
+- Tagging rules:
+  - Push `vX.Y.Z` to trigger a stable release (with OTA updates).
+  - Push `vX.Y.Z-suffix` (must contain `-`, e.g. `-rc1`) to trigger a pre-release build (manual install only).
 
 Algorithms & Implementation: see [Algorithm principles & flow](doc/算法原理与流程.md).
 
