@@ -33,6 +33,7 @@ export default function App() {
   const [updateReady, setUpdateReady] = useState<boolean>(false)
   const [manualMode, setManualMode] = useState<boolean>(false)
   const [manualBpm, setManualBpm] = useState<number | null>(null)
+  const manualModeRef = useRef<boolean>(false)
   const mqlCleanupRef = useRef<null | (() => void)>(null)
   // 高亮锁：当某个值在高置信度下被高亮后，如果之后收到同值但低置信度的数据，仍保持高亮，直到值发生变化
   const bpmRef = useRef<number | null>(null)
@@ -41,6 +42,10 @@ export default function App() {
   const lowConfStreakRef = useRef<{ bpm: number | null, count: number }>({ bpm: null, count: 0 })
   const lowConfPromoteThreshold = 5
   const manualTapTimesRef = useRef<number[]>([])
+
+  useEffect(() => {
+    manualModeRef.current = manualMode
+  }, [manualMode])
 
   const darkTheme = {
     background: '#14060a',
@@ -127,12 +132,15 @@ export default function App() {
   }
 
   // 归零即刷新：抽取公共方法，供按钮与静音超时复用
-  async function doRefresh() {
+  async function doRefresh(options?: { keepManualMode?: boolean }) {
     if (refreshSpin) return
     setRefreshSpin(true)
+    const keepManualMode = options?.keepManualMode ?? false
     try {
       // 清空前端可见状态
-      resetManualMode()
+      if (!keepManualMode) {
+        resetManualMode()
+      }
       setBpm(null); bpmRef.current = null
       setConf(null)
       setState('analyzing')
@@ -261,7 +269,7 @@ export default function App() {
             const SILENT_TIMEOUT_MS = 10000
             if (!silenceTriggeredRef.current && (nowTs - lastNonSilentAtRef.current >= SILENT_TIMEOUT_MS)) {
               silenceTriggeredRef.current = true
-              await doRefresh()
+              await doRefresh({ keepManualMode: manualModeRef.current })
             }
             // 连续静音达到阈值才显示“等待声音”
             if (!showWaitingRef.current && rms <= SILENT_ENTER_THR && (nowTs - lastNonSilentAtRef.current >= SILENT_LABEL_WAIT_MS)) {
@@ -441,23 +449,7 @@ export default function App() {
       <div style={{position:'fixed',right:12,top:12,display:'flex',gap:8,alignItems:'center'}}>
         <button
           onClick={async () => {
-            if (refreshSpin) return
-            setRefreshSpin(true)
-            try {
-              // 清空前端可见状态
-              resetManualMode()
-              setBpm(null); bpmRef.current = null
-              setConf(null)
-              setState('analyzing')
-              setViz(null)
-              highlightLockRef.current = { locked: false, bpm: null }
-              lowConfStreakRef.current = { bpm: null, count: 0 }
-              // 通知后端软重置
-              try { await invoke('reset_backend') } catch {}
-            } finally {
-              // 启动一次 360° 顺时针旋转动画
-              setTimeout(() => setRefreshSpin(false), 420)
-            }
+            await doRefresh()
           }}
           title={t('refresh') || '刷新'}
           style={{
