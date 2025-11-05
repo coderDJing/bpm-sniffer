@@ -34,6 +34,8 @@ const dict: Dict = {
   conf_stable: { 'zh-CN': '稳定', en: 'High' },
   conf_medium: { 'zh-CN': '较稳', en: 'Med' },
   conf_unstable: { 'zh-CN': '不稳', en: 'Low' },
+  manual_enter_hint: { 'zh-CN': '点击进入手动模式', en: 'Click to enter manual mode' },
+  manual_exit_hint: { 'zh-CN': '鼠标右键点击恢复自动模式', en: 'Right click to return to auto mode' },
   theme_toggle_to_light: { 'zh-CN': '切换为日间模式', en: 'Light' },
   theme_toggle_to_dark: { 'zh-CN': '切换为夜间模式', en: 'Dark' },
   pin_on: { 'zh-CN': '已置顶', en: 'Pinned' },

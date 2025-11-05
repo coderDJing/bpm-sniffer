@@ -31,6 +31,8 @@ export default function App() {
   const [themeName, setThemeName] = useState<'dark' | 'light'>('dark')
   const [appVersion, setAppVersion] = useState<string>('')
   const [updateReady, setUpdateReady] = useState<boolean>(false)
+  const [manualMode, setManualMode] = useState<boolean>(false)
+  const [manualBpm, setManualBpm] = useState<number | null>(null)
   const mqlCleanupRef = useRef<null | (() => void)>(null)
   // 高亮锁：当某个值在高置信度下被高亮后，如果之后收到同值但低置信度的数据，仍保持高亮，直到值发生变化
   const bpmRef = useRef<number | null>(null)
@@ -38,6 +40,7 @@ export default function App() {
   // 低置信度同值连续计数：当灰显同值连续达到阈值（如5）时，自动视为需要高亮
   const lowConfStreakRef = useRef<{ bpm: number | null, count: number }>({ bpm: null, count: 0 })
   const lowConfPromoteThreshold = 5
+  const manualTapTimesRef = useRef<number[]>([])
 
   const darkTheme = {
     background: '#14060a',
@@ -75,12 +78,61 @@ export default function App() {
   const SILENT_ENTER_THR = 0.0 // 后端已把极低电平折算为 0
   const SILENT_EXIT_THR = 0.01 // 退出等待需要略高一些，形成回滞，减少抖动
 
+  function resetManualMode() {
+    setManualMode(false)
+    setManualBpm(null)
+    manualTapTimesRef.current = []
+  }
+
+  function handleManualPointerDown(e: React.PointerEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.button === 2) {
+      if (manualMode) {
+        resetManualMode()
+      }
+      return
+    }
+    if (e.button !== 0) return
+    const now = Date.now()
+    const filtered = manualTapTimesRef.current.filter(ts => now - ts <= 8000)
+    filtered.push(now)
+    while (filtered.length > 8) filtered.shift()
+    manualTapTimesRef.current = filtered
+    if (!manualMode) {
+      setManualMode(true)
+      const autoBase = bpmRef.current ?? bpm ?? null
+      if (autoBase != null) {
+        setManualBpm(autoBase)
+      }
+    }
+    if (manualMode && filtered.length === 1) {
+      setManualBpm(null)
+    }
+    if (filtered.length >= 2) {
+      const intervals: number[] = []
+      for (let i = 1; i < filtered.length; i++) {
+        const span = filtered[i] - filtered[i - 1]
+        if (span > 0) intervals.push(span)
+      }
+      if (intervals.length) {
+        const sum = intervals.reduce((acc, cur) => acc + cur, 0)
+        const avg = sum / intervals.length
+        if (avg > 0) {
+          const bpmValue = Math.min(300, Math.max(30, 60000 / avg))
+          setManualBpm(bpmValue)
+        }
+      }
+    }
+  }
+
   // 归零即刷新：抽取公共方法，供按钮与静音超时复用
   async function doRefresh() {
     if (refreshSpin) return
     setRefreshSpin(true)
     try {
       // 清空前端可见状态
+      resetManualMode()
       setBpm(null); bpmRef.current = null
       setConf(null)
       setState('analyzing')
@@ -274,14 +326,18 @@ export default function App() {
   const baseConfLabel = conf == null ? '—' : conf >= 0.75 ? t('conf_stable') : conf >= 0.5 ? t('conf_medium') : t('conf_unstable')
   const baseConfColor = conf == null ? theme.confGray : (conf >= 0.5 ? theme.textPrimary : theme.confGray)
   // 当高亮锁生效且锁定的值与当前显示值一致时，始终使用高亮颜色
-  const currentDisplayedBpm = (bpm == null ? bpmRef.current : bpm)
+  const autoDisplayedBpm = (bpm == null ? bpmRef.current : bpm)
+  const currentDisplayedBpm = manualMode ? manualBpm : autoDisplayedBpm
   const currentDisplayedIntForColor = currentDisplayedBpm != null ? Math.round(currentDisplayedBpm) : null
-  const isLockedHighlight = !!(highlightLockRef.current.locked && highlightLockRef.current.bpm != null && highlightLockRef.current.bpm === currentDisplayedIntForColor)
+  const isLockedHighlight = !manualMode && !!(highlightLockRef.current.locked && highlightLockRef.current.bpm != null && highlightLockRef.current.bpm === currentDisplayedIntForColor)
   const confLabel = isLockedHighlight ? t('conf_stable') : baseConfLabel
   const confColor = isLockedHighlight ? theme.textPrimary : baseConfColor
-  const bpmColor = isLockedHighlight ? theme.textPrimary : (conf == null ? theme.confGray : (conf >= 0.5 ? theme.textPrimary : theme.confGray))
+  const bpmColor = manualMode
+    ? theme.accent
+    : (isLockedHighlight ? theme.textPrimary : (conf == null ? theme.confGray : (conf >= 0.5 ? theme.textPrimary : theme.confGray)))
   // 状态标签：当静音去抖成立时显示“等待声音”；其余规则保持不变
   const label = showWaiting ? t('state_waiting_audio') : (state === 'analyzing' ? t('state_analyzing') : (isLockedHighlight ? t('state_tracking') : baseLabel))
+  const displayBpm = currentDisplayedBpm != null ? Math.round(currentDisplayedBpm) : 0
 
   // 已固定后端为基础模式，无切换
 
@@ -356,11 +412,21 @@ export default function App() {
       )}
       <div style={{flex:'1 1 auto', width:'100%', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:0, minHeight: hideViz ? '100vh' : undefined}}>
         {!hideTitle && <h1 style={{margin:0,color:'#eb1a50',fontSize:18}}>{t('app_title')}</h1>}
-        <div style={{fontSize:96,fontWeight:700,letterSpacing:2,color:bpmColor,height:'100px',lineHeight:'100px'}}>{bpm == null ? 0 : Math.round(bpm)}</div>
+        <div
+          onPointerDown={handleManualPointerDown}
+          title={!manualMode ? t('manual_enter_hint') : undefined}
+          style={{fontSize:96,fontWeight:700,letterSpacing:2,color:bpmColor,height:'100px',lineHeight:'100px',position:'relative',cursor:'pointer',userSelect:'none',display:'flex',alignItems:'center',justifyContent:'center'}}
+        >
+          {displayBpm}
+        </div>
         {!hideMeta && (
-          <div style={{fontSize:14,color:theme.textSecondary,paddingTop:'10px'}}>
-            {label} · {t('conf_label')}<span style={{color: confColor}}>{confLabel}</span>
-          </div>
+          manualMode ? (
+            <div style={{fontSize:14,color:theme.textSecondary,paddingTop:'10px'}}>{t('manual_exit_hint')}</div>
+          ) : (
+            <div style={{fontSize:14,color:theme.textSecondary,paddingTop:'10px'}}>
+              {label} · {t('conf_label')}<span style={{color: confColor}}>{confLabel}</span>
+            </div>
+          )
         )}
       </div>
 
@@ -379,6 +445,7 @@ export default function App() {
             setRefreshSpin(true)
             try {
               // 清空前端可见状态
+              resetManualMode()
               setBpm(null); bpmRef.current = null
               setConf(null)
               setState('analyzing')
