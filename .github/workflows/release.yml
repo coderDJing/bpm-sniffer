@@ -99,6 +99,7 @@ jobs:
               core.setFailed('无法解析当前构建对应的 tag 名称。');
               return;
             }
+            core.info(`正在检查 tag ${tag} 的资产...`);
             const patterns = [
               /latest\.json$/,
               /_x64-setup\.exe$/,
@@ -107,6 +108,7 @@ jobs:
             for (let attempt = 1; attempt <= 10; attempt++) {
               const { data: release } = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
               const assets = release.assets || [];
+              core.info(`第 ${attempt} 次轮询，共 ${assets.length} 个资产：${assets.map(a => a.name).join(', ') || '（空）'}`);
               const allFound = patterns.every((pattern) => assets.some((asset) => pattern.test(asset.name)));
               if (allFound) {
                 core.info(`Release assets ready on attempt ${attempt}`);
@@ -193,3 +195,26 @@ jobs:
             latest.json
             pre-assets/*_x64-setup.exe
             pre-assets/*_x64-setup.exe.sig
+
+      - name: 失败时回滚当前 tag Release
+        if: failure() && contains(github.ref_name, '-')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            let tag = context.ref_name || '';
+            if ((!tag || !tag.length) && context.ref && context.ref.startsWith('refs/tags/')) {
+              tag = context.ref.substring('refs/tags/'.length);
+            }
+            if (!tag || !tag.length) {
+              core.warning('未能解析 tag，跳过回滚');
+              return;
+            }
+            try {
+              const { data: release } = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+              core.info(`删除失败构建产生的 Release: ${release.name || release.tag_name}`);
+              await github.rest.repos.deleteRelease({ owner, repo, release_id: release.id });
+            } catch (err) {
+              core.warning(`回滚 Release 失败：${err.message}`);
+            }
