@@ -102,8 +102,8 @@ jobs:
             core.info(`正在检查 tag ${tag} 的资产...`);
             const patterns = [
               /latest\.json$/,
-              /_x64-setup\.exe$/,
-              /_x64-setup\.exe\.sig$/
+              /_x64-setup.*\.exe$/,
+              /_x64-setup.*\.exe\.sig$/
             ];
             for (let attempt = 1; attempt <= 10; attempt++) {
               const { data: release } = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
