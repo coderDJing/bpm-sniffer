@@ -77,6 +77,13 @@ jobs:
 
       # 预发布同步：按安装包进行自包含同步（而非 updater zip）
 
+      - name: 等待 Release 资产刷新
+        if: contains(github.ref_name, '-')
+        shell: bash
+        run: |
+          # GitHub Release 资产上传后存在短暂延迟，这里稍作等待避免下载步骤立即失败
+          sleep 20
+
       # 预发布：从“本次 tag 的 Release”下载 latest.json 到工作区
       - name: Download latest.json from current release
         if: contains(github.ref_name, '-')
