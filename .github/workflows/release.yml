@@ -84,6 +84,35 @@ jobs:
           # GitHub Release 资产上传后存在短暂延迟，这里稍作等待避免下载步骤立即失败
           sleep 20
 
+      - name: 检查资产是否已经可见
+        if: contains(github.ref_name, '-')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const tag = context.ref_name;
+            const patterns = [
+              /latest\.json$/,
+              /_x64-setup\.exe$/,
+              /_x64-setup\.exe\.sig$/
+            ];
+            for (let attempt = 1; attempt <= 10; attempt++) {
+              const { data: release } = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+              const assets = release.assets || [];
+              const allFound = patterns.every((pattern) => assets.some((asset) => pattern.test(asset.name)));
+              if (allFound) {
+                core.info(`Release assets ready on attempt ${attempt}`);
+                return;
+              }
+              if (attempt === 10) {
+                core.setFailed(`Assets not ready after ${attempt} attempts.`);
+                return;
+              }
+              core.info(`Assets missing on attempt ${attempt}, waiting 10s...`);
+              await new Promise((resolve) => setTimeout(resolve, 10000));
+            }
+
       # 预发布：从“本次 tag 的 Release”下载 latest.json 到工作区
       - name: Download latest.json from current release
         if: contains(github.ref_name, '-')
