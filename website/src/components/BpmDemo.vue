@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch, withDefaults } from 'vue'
 import VizPanel from './bpm/VizPanel.vue'
 import refreshIcon from '../assets/bpm/refresh.png'
 import sunIcon from '../assets/bpm/sun.png'
@@ -9,14 +9,36 @@ import floatingIcon from '../assets/bpm/floatingWindow.png'
 
 type VizMode = 'wave' | 'bars' | 'waterfall'
 type AudioViz = { samples: number[]; rms: number }
-type BeatShape = {
-  attack: number
-  decay: number
-  wavelets: number
-  bend: number
-  offset: number
-  grit: number
+type DemoI18n = {
+  metaText: string
+  confText: string
+  refresh: string
+  themeToggle: string
+  pinOn: string
+  pinOff: string
+  floatingOn: string
+  floatingOff: string
 }
+
+const props = withDefaults(
+  defineProps<{
+    i18n?: DemoI18n
+  }>(),
+  {
+    i18n: () => ({
+      metaText: '节拍稳定 · 置信度：',
+      confText: '稳定',
+      refresh: '刷新',
+      themeToggle: '切换主题',
+      pinOn: '已置顶',
+      pinOff: '置顶',
+      floatingOn: '悬浮中',
+      floatingOff: '悬浮球'
+    })
+  }
+)
+
+const i18n = computed(() => props.i18n)
 
 const themeName = ref<'dark' | 'light'>('dark')
 const alwaysOnTop = ref(false)
@@ -26,6 +48,80 @@ const refreshSpin = ref(false)
 
 const SAMPLE_COUNT = 512
 
+const viz = ref<AudioViz>({
+  samples: new Array(SAMPLE_COUNT).fill(0),
+  rms: 0
+})
+
+const darkTheme = {
+  background: '#14060a',
+  textPrimary: '#ffffff',
+  textSecondary: '#f3a0b3',
+  subduedText: '#6b829e',
+  accent: '#eb1a50',
+  panelBg: '#1a0a0f',
+  grid: '#3a0b17',
+  line: '#eb1a50',
+  confGray: '#9aa3ab',
+  panel: '#1a0a0f'
+}
+
+const lightTheme = {
+  background: '#fff4f7',
+  textPrimary: '#1b0a10',
+  textSecondary: '#b21642',
+  subduedText: '#5c6c7a',
+  accent: '#eb1a50',
+  panelBg: '#ffe8ee',
+  grid: '#ffd0db',
+  line: '#eb1a50',
+  confGray: '#8a8f96',
+  panel: '#ffe8ee'
+}
+
+const theme = computed(() => (themeName.value === 'dark' ? darkTheme : lightTheme))
+
+const displayBpm = computed(() => '124')
+const metaText = computed(() => i18n.value.metaText)
+const confText = computed(() => i18n.value.confText)
+const confColor = computed(() => theme.value.textPrimary)
+const bpmColor = computed(() => theme.value.textPrimary)
+
+function toggleTheme() {
+  themeName.value = themeName.value === 'dark' ? 'light' : 'dark'
+}
+
+function togglePin() {
+  alwaysOnTop.value = !alwaysOnTop.value
+}
+
+function toggleFloating() {
+  floating.value = !floating.value
+}
+
+function handleRefresh() {
+  if (refreshSpin.value) return
+  refreshSpin.value = true
+  setTimeout(() => {
+    refreshSpin.value = false
+  }, 420)
+}
+
+function cycleVizMode() {
+  vizMode.value = vizMode.value === 'wave' ? 'bars' : vizMode.value === 'bars' ? 'waterfall' : 'wave'
+}
+
+let vizTimer: number | null = null
+
+type BeatShape = {
+  attack: number
+  decay: number
+  wavelets: number
+  bend: number
+  offset: number
+  grit: number
+}
+
 const makeBeatShape = (): BeatShape => ({
   attack: 0.03 + Math.random() * 0.04,
   decay: 0.16 + Math.random() * 0.22,
@@ -34,6 +130,20 @@ const makeBeatShape = (): BeatShape => ({
   offset: Math.random(),
   grit: 0.3 + Math.random() * 0.7
 })
+
+const getNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now())
+let driftPhase = Math.random() * Math.PI * 2
+let rushPhase = Math.random() * Math.PI * 2
+let beatPhase = Math.random()
+let beatEnergy = 0.3
+let lastTick = getNow()
+let glitchEnergy = 0
+let dropoutTimer = 0
+let dropoutActive = false
+let rumblePhase = Math.random() * Math.PI * 2
+let warpPhase = Math.random() * Math.PI * 2
+let beatShape = makeBeatShape()
+let centerBias = 0
 
 const pulseEnvelope = (phase: number, attack: number, decay: number, curve = 1.5) => {
   let p = phase % 1
@@ -45,11 +155,6 @@ const pulseEnvelope = (phase: number, attack: number, decay: number, curve = 1.5
   const fall = Math.max(0, (p - attack) / Math.max(decay, 0.001))
   return Math.exp(-fall * (1 + curve * 0.55))
 }
-
-const viz = ref<AudioViz>({
-  samples: new Array(SAMPLE_COUNT).fill(0),
-  rms: 0
-})
 
 const floatingCanvasRef = ref<HTMLCanvasElement | null>(null)
 
@@ -64,7 +169,6 @@ const floatingGap = 0.12
 const floatingMargin = Math.ceil(floatingShadowBlur + (floatingBaseStroke + floatingWidthGain) / 2 + floatingRadiusGain + 2)
 const FLOATING_CANVAS_EDGE = floatingBallSize + floatingMargin * 2
 
-const floatingLabelColor = computed(() => (themeName.value === 'dark' ? '#c8d2df' : '#5c606d'))
 function hexToRgba(hex: string, alpha: number) {
   const h = hex.replace('#', '')
   if (h.length !== 3 && h.length !== 6) return `rgba(235,26,80,${alpha})`
@@ -154,7 +258,6 @@ function renderFloatingFrame() {
 }
 
 async function startFloatingLoop() {
-  await nextTick()
   stopFloatingLoop()
   if (!floating.value || !floatingCanvasRef.value) return
   const tick = () => {
@@ -167,80 +270,6 @@ async function startFloatingLoop() {
   }
   tick()
 }
-
-const darkTheme = {
-  background: '#14060a',
-  textPrimary: '#ffffff',
-  textSecondary: '#f3a0b3',
-  subduedText: '#6b829e',
-  accent: '#eb1a50',
-  panelBg: '#1a0a0f',
-  grid: '#3a0b17',
-  line: '#eb1a50',
-  confGray: '#9aa3ab',
-  panel: '#1a0a0f'
-}
-
-const lightTheme = {
-  background: '#fff4f7',
-  textPrimary: '#1b0a10',
-  textSecondary: '#b21642',
-  subduedText: '#5c6c7a',
-  accent: '#eb1a50',
-  panelBg: '#ffe8ee',
-  grid: '#ffd0db',
-  line: '#eb1a50',
-  confGray: '#8a8f96',
-  panel: '#ffe8ee'
-}
-
-const theme = computed(() => (themeName.value === 'dark' ? darkTheme : lightTheme))
-
-const displayBpm = computed(() => '124')
-const metaText = '节拍稳定 · 置信度：'
-const confText = '稳定'
-const confColor = computed(() => theme.value.textPrimary)
-const bpmColor = computed(() => theme.value.textPrimary)
-
-function toggleTheme() {
-  themeName.value = themeName.value === 'dark' ? 'light' : 'dark'
-}
-
-function togglePin() {
-  alwaysOnTop.value = !alwaysOnTop.value
-}
-
-function toggleFloating() {
-  floating.value = !floating.value
-}
-
-function handleRefresh() {
-  if (refreshSpin.value) return
-  refreshSpin.value = true
-  setTimeout(() => {
-    refreshSpin.value = false
-  }, 420)
-}
-
-function cycleVizMode() {
-  vizMode.value = vizMode.value === 'wave' ? 'bars' : vizMode.value === 'bars' ? 'waterfall' : 'wave'
-}
-
-let vizTimer: number | null = null
-
-const getNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now())
-let driftPhase = Math.random() * Math.PI * 2
-let rushPhase = Math.random() * Math.PI * 2
-let beatPhase = Math.random()
-let beatEnergy = 0.3
-let lastTick = getNow()
-let glitchEnergy = 0
-let dropoutTimer = 0
-let dropoutActive = false
-let rumblePhase = Math.random() * Math.PI * 2
-let warpPhase = Math.random() * Math.PI * 2
-let beatShape = makeBeatShape()
-let centerBias = 0
 
 function updateFakeStream() {
   const phaseBefore = beatPhase
@@ -301,8 +330,7 @@ function updateFakeStream() {
     const envelope = (0.42 + Math.sin(now * 0.0005 + warpPhase + u * 2) * 0.2) * gateFloor
     const base = Math.sin(t + Math.sin(t * 0.2) * beatShape.bend) * envelope
     const harmonic =
-      Math.sin(t * (0.52 + Math.sin(u * 3 + rushPhase) * 0.08) + Math.sin(t * 0.08) * 2.3) *
-      (0.22 + gate * 0.35)
+      Math.sin(t * (0.52 + Math.sin(u * 3 + rushPhase) * 0.08) + Math.sin(t * 0.08) * 2.3) * (0.22 + gate * 0.35)
     const jagged =
       Math.sin(rushPhase + u * (40 + Math.sin(now * 0.0009) * 16) + Math.sin(t) * 3.4) *
       (0.08 + gate * 0.24)
@@ -370,73 +398,49 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="demo-window" :class="{ floating }" :style="{ background: theme.background, color: theme.textPrimary }">
-    <div v-if="!floating" class="panel-content">
-      <div class="title">BPM</div>
-      <div class="bpm-display" :style="{ color: bpmColor }">
-        {{ displayBpm }}
-      </div>
-      <div class="meta-line">
-        {{ metaText }}
-        <span class="conf" :style="{ color: confColor }">{{ confText }}</span>
-      </div>
-      <VizPanel
-        class="viz-panel-shell"
-        :theme="theme"
-        :hide-rms="false"
-        :viz="viz"
-        :mode="vizMode"
-        :theme-name="themeName"
-        :width="350"
-        :base-height="150"
-        @toggle="cycleVizMode"
-      />
-      <div class="actions">
-        <button class="icon-btn" title="刷新" @click="handleRefresh">
-          <img
-            :src="refreshIcon"
-            alt="刷新"
-            :style="{
-              transform: refreshSpin ? 'rotate(360deg)' : 'rotate(0deg)',
-              transition: 'transform 360ms ease'
-            }"
-          />
-        </button>
-        <button class="icon-btn" title="切换主题" @click="toggleTheme">
-          <span class="theme-icons">
-            <img :src="sunIcon" alt="日间" :class="{ active: themeName === 'light' }" />
-            <img :src="moonIcon" alt="夜间" :class="{ active: themeName === 'dark' }" />
-          </span>
-        </button>
-        <button class="icon-btn" :title="alwaysOnTop ? '已置顶' : '置顶'" @click="togglePin">
-          <img :src="pinIcon" alt="置顶" :class="{ pinned: alwaysOnTop }" />
-        </button>
-        <button class="icon-btn" :title="floating ? '悬浮中' : '悬浮球'" @click="toggleFloating">
-          <img :src="floatingIcon" alt="悬浮球" :class="{ active: floating }" />
-        </button>
-      </div>
+  <div class="demo-window" :style="{ background: theme.background, color: theme.textPrimary }">
+    <div class="title">BPM</div>
+    <div class="bpm-display" :style="{ color: bpmColor }">
+      {{ displayBpm }}
     </div>
-    <div v-else class="floating-shell">
-      <div
-        class="floating-ball"
-        :style="{ width: FLOATING_CANVAS_EDGE + 'px', height: FLOATING_CANVAS_EDGE + 'px' }"
-        title="双击返回面板"
-        @dblclick.stop.prevent="toggleFloating"
-      >
-        <canvas ref="floatingCanvasRef" class="floating-canvas"></canvas>
-        <div
-          class="floating-core"
+    <div class="meta-line">
+      {{ metaText }}
+      <span class="conf" :style="{ color: confColor }">{{ confText }}</span>
+    </div>
+    <VizPanel
+      class="viz-panel-shell"
+      :theme="theme"
+      :hide-rms="false"
+      :viz="viz"
+      :mode="vizMode"
+      :theme-name="themeName"
+      :width="350"
+      :base-height="150"
+      @toggle="cycleVizMode"
+    />
+    <div class="actions">
+      <button class="icon-btn" :title="i18n.refresh" @click="handleRefresh">
+        <img
+          :src="refreshIcon"
+          :alt="i18n.refresh"
           :style="{
-            width: floatingBallSize + 'px',
-            height: floatingBallSize + 'px',
-            background: theme.panelBg ?? theme.panel ?? theme.background
+            transform: refreshSpin ? 'rotate(360deg)' : 'rotate(0deg)',
+            transition: 'transform 360ms ease'
           }"
-        >
-          <span class="floating-core-text" :style="{ color: bpmColor }">{{ displayBpm }}</span>
-          <span class="floating-core-label" :style="{ color: floatingLabelColor }">BPM</span>
-        </div>
-      </div>
-      <div class="floating-hint">双击返回面板</div>
+        />
+      </button>
+      <button class="icon-btn" :title="i18n.themeToggle" @click="toggleTheme">
+        <span class="theme-icons">
+          <img :src="sunIcon" alt="light" :class="{ active: themeName === 'light' }" />
+          <img :src="moonIcon" alt="dark" :class="{ active: themeName === 'dark' }" />
+        </span>
+      </button>
+      <button class="icon-btn" :title="alwaysOnTop ? i18n.pinOn : i18n.pinOff" @click="togglePin">
+        <img :src="pinIcon" :alt="i18n.pinOff" :class="{ pinned: alwaysOnTop }" />
+      </button>
+      <button class="icon-btn" :title="floating ? i18n.floatingOn : i18n.floatingOff" @click="toggleFloating">
+        <img :src="floatingIcon" :alt="i18n.floatingOff" :class="{ active: floating }" />
+      </button>
     </div>
   </div>
 </template>
@@ -456,77 +460,6 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   gap: 0;
-}
-
-.panel-content {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.demo-window.floating {
-  width: 220px;
-  height: 220px;
-  padding: 0;
-  border: none;
-  box-shadow: none;
-  background: transparent;
-}
-
-.floating-shell {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-}
-
-.floating-ball {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-
-.floating-canvas {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  filter: none;
-}
-
-.floating-core {
-  position: relative;
-  border-radius: 50%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  box-shadow: none;
-  letter-spacing: 1px;
-}
-
-.floating-core-text {
-  font-size: 22px;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.floating-core-label {
-  font-size: 9px;
-  letter-spacing: 1.8px;
-}
-
-.floating-hint {
-  font-size: 12px;
-  color: #aeb7c4;
-  letter-spacing: 1px;
 }
 
 .actions {
@@ -626,5 +559,4 @@ onUnmounted(() => {
   display: flex;
   justify-content: center;
 }
-
 </style>
