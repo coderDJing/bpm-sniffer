@@ -42,7 +42,8 @@
 
 ### 下载与安装
 
-- 前往发布页的 latest 下载 Windows 安装包（NSIS）：[Releases · coderDJing/bpm-sniffer](https://github.com/coderDJing/bpm-sniffer/releases/latest)。
+- 官网始终指向最新正式版：[https://coderDJing.github.io/bpm-sniffer/](https://coderDJing.github.io/bpm-sniffer/)
+- 如果更习惯 GitHub，可直接在 Releases 下载 Windows 安装包（NSIS）：[Releases · coderDJing/bpm-sniffer](https://github.com/coderDJing/bpm-sniffer/releases/latest)。
 
 
 ### 如何使用

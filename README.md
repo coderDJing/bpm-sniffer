@@ -42,7 +42,8 @@ Supports bilingual UI (Simplified Chinese / English). The language follows your 
 
 ### Download & Install
 
-- Go to the latest release page and download the Windows installer (NSIS): [Releases · coderDJing/bpm-sniffer](https://github.com/coderDJing/bpm-sniffer/releases/latest).
+- Official website (always points to the latest stable build): [https://coderDJing.github.io/bpm-sniffer/](https://coderDJing.github.io/bpm-sniffer/)
+- Prefer GitHub? Grab the Windows installer (NSIS) from Releases: [Releases · coderDJing/bpm-sniffer](https://github.com/coderDJing/bpm-sniffer/releases/latest).
 
 
 ### How to Use
