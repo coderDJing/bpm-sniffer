@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch, withDefaults } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import VizPanel from './bpm/VizPanel.vue'
 import refreshIcon from '../assets/bpm/refresh.png'
 import sunIcon from '../assets/bpm/sun.png'

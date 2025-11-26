@@ -49,6 +49,33 @@ const releaseNotesExcerpt = computed(() => {
     .slice(0, 3)
 })
 
+const SITE_NAME = 'BPM Sniffer'
+const FALLBACK_SITE_URL = 'https://coderDJing.github.io/bpm-sniffer/'
+const envSiteUrlRaw = (import.meta.env as Record<string, string | undefined>).VITE_SITE_URL
+const envSiteUrl = envSiteUrlRaw ? envSiteUrlRaw.trim() : ''
+const ensureTrailingSlash = (value: string) => {
+  if (!value) return '/'
+  return value.endsWith('/') ? value : `${value}/`
+}
+const resolveRuntimeUrl = () => {
+  if (envSiteUrl) return envSiteUrl
+  if (typeof window !== 'undefined') {
+    const { origin, pathname } = window.location
+    let normalizedPath = pathname
+    if (normalizedPath.endsWith('index.html')) {
+      normalizedPath = normalizedPath.slice(0, -'index.html'.length)
+    }
+    if (!normalizedPath.endsWith('/')) {
+      normalizedPath = `${normalizedPath}/`
+    }
+    return `${origin}${normalizedPath}`
+  }
+  return FALLBACK_SITE_URL
+}
+const canonicalUrl = ensureTrailingSlash(resolveRuntimeUrl() || FALLBACK_SITE_URL)
+const canonicalBase = canonicalUrl.replace(/\/$/, '')
+const socialCardUrl = canonicalBase ? `${canonicalBase}/social-card.png` : `${canonicalUrl}social-card.png`
+
 type SiteLang = 'zh' | 'en'
 type FeatureEntry = { title: string; detail: string }
 type StepEntry = { label: string; title: string; detail: string }
@@ -61,6 +88,13 @@ type DemoEntry = {
   pinOff: string
   floatingOn: string
   floatingOff: string
+}
+
+type SeoEntry = {
+  title: string
+  description: string
+  keywords: string[]
+  locale: string
 }
 
 type TranslationEntry = {
@@ -82,6 +116,7 @@ type TranslationEntry = {
   steps: StepEntry[]
   langToggleLabel: string
   demo: DemoEntry
+  seo: SeoEntry
 }
 
 const translations: Record<SiteLang, TranslationEntry> = {
@@ -122,6 +157,13 @@ const translations: Record<SiteLang, TranslationEntry> = {
       pinOff: '置顶',
       floatingOn: '悬浮中',
       floatingOff: '悬浮球'
+    },
+    seo: {
+      title: 'BPM Sniffer · 系统音频实时 BPM 侦测工具',
+      description:
+        'BPM Sniffer 是一款面向 Windows 10+ 的系统音频 BPM 检测工具，安装即用、零驱动依赖，提供稳定数值、可视化与 OTA 更新。',
+      keywords: ['BPM Sniffer', 'BPM 检测', '节拍侦测', '系统音频', 'DJ 工具'],
+      locale: 'zh_CN'
     }
   },
   en: {
@@ -170,6 +212,13 @@ const translations: Record<SiteLang, TranslationEntry> = {
       pinOff: 'Pin window',
       floatingOn: 'Floating',
       floatingOff: 'Floating widget'
+    },
+    seo: {
+      title: 'BPM Sniffer · Real-time system audio BPM detector',
+      description:
+        'BPM Sniffer is a lightweight Windows BPM detector that listens to any system audio, keeps the BPM steady with visuals, and updates itself over the air.',
+      keywords: ['BPM Sniffer', 'BPM detector', 'beat detection', 'system audio', 'DJ tool'],
+      locale: 'en_US'
     }
   }
 }
@@ -216,9 +265,59 @@ const releaseDateText = computed(() => {
   }
 })
 const demoI18n = computed(() => localized.value.demo)
+const seoMeta = computed(() => localized.value.seo)
 
 function toggleLang() {
   lang.value = lang.value === 'zh' ? 'en' : 'zh'
+}
+
+function upsertMeta(attribute: 'name' | 'property', key: string, value: string) {
+  if (typeof document === 'undefined') return
+  const head = document.head || document.querySelector('head')
+  if (!head) return
+  let element = head.querySelector<HTMLMetaElement>(`meta[${attribute}="${key}"]`)
+  if (!element) {
+    element = document.createElement('meta')
+    element.setAttribute(attribute, key)
+    head.appendChild(element)
+  }
+  element.setAttribute('content', value)
+}
+
+function upsertLink(rel: string, href: string) {
+  if (typeof document === 'undefined') return
+  const head = document.head || document.querySelector('head')
+  if (!head) return
+  let link = head.querySelector<HTMLLinkElement>(`link[rel="${rel}"]`)
+  if (!link) {
+    link = document.createElement('link')
+    link.setAttribute('rel', rel)
+    head.appendChild(link)
+  }
+  link.setAttribute('href', href)
+}
+
+function applySeoMeta() {
+  if (typeof document === 'undefined') return
+  const meta = seoMeta.value
+  const keywords = (meta.keywords || []).join(', ')
+  document.title = meta.title
+  document.documentElement.lang = lang.value
+  upsertMeta('name', 'description', meta.description)
+  if (keywords) {
+    upsertMeta('name', 'keywords', keywords)
+  }
+  upsertMeta('property', 'og:title', meta.title)
+  upsertMeta('property', 'og:description', meta.description)
+  upsertMeta('property', 'og:locale', meta.locale)
+  upsertMeta('property', 'og:url', canonicalUrl)
+  upsertMeta('property', 'og:image', socialCardUrl)
+  upsertMeta('property', 'og:site_name', SITE_NAME)
+  upsertMeta('name', 'twitter:card', 'summary_large_image')
+  upsertMeta('name', 'twitter:title', meta.title)
+  upsertMeta('name', 'twitter:description', meta.description)
+  upsertMeta('name', 'twitter:image', socialCardUrl)
+  upsertLink('canonical', canonicalUrl)
 }
 
 watch(lang, (val) => {
@@ -230,6 +329,14 @@ watch(lang, (val) => {
     }
   }
 })
+
+watch(
+  lang,
+  () => {
+    applySeoMeta()
+  },
+  { immediate: true }
+)
 
 onMounted(() => {
   fetchLatestRelease()
