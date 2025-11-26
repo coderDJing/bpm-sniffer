@@ -18,7 +18,6 @@ use tauri_plugin_single_instance::init as single_instance;
 // use tauri_plugin_updater::UpdaterExt;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
-use tauri::Url;
 use tauri::webview::WebviewWindowBuilder;
 use tauri::WebviewUrl;
 use tauri::{LogicalSize, Size};
@@ -147,6 +146,11 @@ fn main() {
                     let _ = win.set_max_size(Some(Size::Logical(LogicalSize::new(max_w, max_h))));
                     let _ = win.set_size(Size::Logical(LogicalSize::new(base_w, base_h)));
                 }
+            }
+            if let Some(float_win) = app.get_webview_window("float") {
+                let float_w = 128.0f64;
+                let float_h = 128.0f64;
+                let _ = float_win.set_size(Size::Logical(LogicalSize::new(float_w, float_h)));
             }
 
             // 开发模式下显式导航至 Vite 开发服务器，避免资源协议映射异常

@@ -601,95 +601,105 @@ function FloatBall({ themeName, bpm, conf, viz, onExit, isLockedHighlight }: { t
   const [hover, setHover] = React.useState(false)
   const lastClickRef = React.useRef<number>(0)
   const dragStartRef = React.useRef<{x:number,y:number}|null>(null)
-  const mode: 'bars' = 'bars'
-  // 悬浮球固定尺寸，需在依赖它的 effect 之前声明
-  const ballSize = 56
-  // 中等夸张参数（与绘制一致），据此给出透明边距，避免裁剪
-  const baseStroke = 2.2
-  const widthGain = 2.2
-  const radiusGain = 1.5
-  const shadowBlur = 6
-  const innerRadiusGain = 0.9
-  const marginPx = Math.ceil(shadowBlur + (baseStroke + widthGain)/2 + radiusGain + 1)
+  const accent = theme.ring || '#eb1a50'
+  const ballSize = 58
+  const baseStroke = 1.68
+  const widthGain = 2.24
+  const radiusGain = 2.56
+  const innerRadiusGain = 0.96
+  const shadowBlur = 9.6
+  const segments = 64
+  const segmentGap = 0.12
+  const marginPx = Math.ceil(shadowBlur + (baseStroke + widthGain) / 2 + radiusGain + 2)
   const canvasSize = ballSize + marginPx * 2
 
-  const canvasRef = React.useRef<HTMLCanvasElement|null>(null)
-  // rAF 驱动：以最新 viz 作为源，在屏幕刷新节奏下重绘，保证前端帧率不受事件抖动影响
+  const toRgba = React.useCallback(
+    (alpha: number) => {
+      const hex = accent.startsWith('#') ? accent.slice(1) : null
+      if (!hex || (hex.length !== 3 && hex.length !== 6)) {
+        return `rgba(235,26,80,${alpha})`
+      }
+      const full = hex.length === 3 ? hex.split('').map((c) => c + c).join('') : hex
+      const num = parseInt(full, 16)
+      const r = (num >> 16) & 255
+      const g = (num >> 8) & 255
+      const b = num & 255
+      return `rgba(${r},${g},${b},${alpha})`
+    },
+    [accent]
+  )
+
+  const canvasRef = React.useRef<HTMLCanvasElement | null>(null)
+  // rAF ?????? viz ?????????????????????????????
   const lastVizRef = React.useRef<AudioViz | null>(null)
   React.useEffect(() => { lastVizRef.current = viz }, [viz])
   React.useEffect(() => {
     let rafId = 0
-    let phase = 0 // 中等夸张：轻微相位流动
-    function tick() {
+    const tick = () => {
       const cvs = canvasRef.current
       if (cvs) {
         const ctx = cvs.getContext('2d')
         if (ctx) {
           const dpr = Math.max(1, Math.floor(window.devicePixelRatio || 1))
-          const cssW = canvasSize, cssH = canvasSize
+          const cssW = canvasSize
+          const cssH = canvasSize
           if (cvs.width !== cssW * dpr || cvs.height !== cssH * dpr) {
             cvs.width = cssW * dpr; cvs.height = cssH * dpr
           }
           cvs.style.width = cssW + 'px'; cvs.style.height = cssH + 'px'
           ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-          const W = cssW, H = cssH
-          ctx.clearRect(0,0,W,H)
-          const cx=W/2, cy=H/2
-          // 以视觉圆直径为基准，确保可视化与圆边对齐（静止外缘≈圆半径，稍作+0.25px外扩防露底）
-          const rBase = Math.max(1, ballSize/2 - baseStroke/2 + 0.25)
-          ctx.lineCap = 'round' as CanvasLineCap
-          ctx.lineJoin = 'round' as CanvasLineJoin
-          const N = 64
-          const gap = 0.08
+          ctx.clearRect(0,0,cssW,cssH)
+          const cx = cssW / 2
+          const cy = cssH / 2
           const samples = lastVizRef.current?.samples ?? []
           const rms = lastVizRef.current?.rms ?? 0
-          const energyBoost = Math.min(2.0, 0.9 + rms * 2.0)
-          ctx.shadowBlur = shadowBlur
-          ctx.shadowColor = 'rgba(235,26,80,0.80)'
-          const silent = (rms <= 0.001)
-          // 基础环：静音时更亮但不过分厚
-          {
-            ctx.save()
-            ctx.shadowBlur = silent ? (shadowBlur + 1) : shadowBlur
-            // 让静止时外缘与 rBase 一致：取与动态线宽同一“视觉厚度”级别
-            ctx.lineWidth = silent ? Math.max(1.6, baseStroke * 0.9) : Math.max(1.0, baseStroke * 0.7)
-            ctx.strokeStyle = `rgba(235,26,80,${silent ? 0.55 : 0.20})`
-            ctx.beginPath(); ctx.arc(cx,cy,rBase,0,Math.PI*2,false); ctx.stroke()
-            ctx.restore()
-          }
-          for (let i=0;i<N;i++){
-            let v=0, cnt=0
-            if (samples.length){
-              const i0=Math.floor(i*samples.length/N); const i1=Math.floor((i+1)*samples.length/N)
-              for (let j=i0;j<i1;j++){ v+=Math.abs(samples[j]||0); cnt++ }
-              v = cnt? v/cnt : 0
+          const silent = rms <= 0.002
+          const energyBoost = Math.min(2.2, 0.85 + rms * 2.4)
+          const rBase = Math.max(8, ballSize / 2 - baseStroke / 2 + radiusGain)
+          ctx.lineCap = 'round' as CanvasLineCap
+          ctx.lineJoin = 'round' as CanvasLineJoin
+
+          ctx.save()
+          ctx.shadowBlur = 0
+          ctx.lineWidth = Math.max(1.1, baseStroke * (silent ? 0.85 : 0.7))
+          ctx.strokeStyle = toRgba(silent ? 0.5 : 0.25)
+          ctx.beginPath(); ctx.arc(cx, cy, rBase, 0, Math.PI * 2, false); ctx.stroke()
+          ctx.restore()
+
+          const seg = (Math.PI * 2) / segments
+          for (let i = 0; i < segments; i++) {
+            let acc = 0
+            let cnt = 0
+            if (samples.length) {
+              const i0 = Math.floor((i / segments) * samples.length)
+              const i1 = Math.floor(((i + 1) / segments) * samples.length)
+              for (let j = i0; j < i1; j++) { acc += Math.abs(samples[j] || 0); cnt++ }
             }
-            const v2 = Math.pow(Math.min(1, v * energyBoost * 2.0), 0.58)
-            const baseA = silent ? 0.40 : 0.26
-            const alpha = Math.min(1, baseA + v2 * (silent ? 0.45 : 0.60))
-            const seg = (2*Math.PI)/N
-            const a0 = -Math.PI/2 + i*seg + seg*gap*0.5 + phase
-            const a1 = a0 + seg*(1-gap)
-            const r2 = rBase + v2 * radiusGain
-            ctx.lineWidth = baseStroke + v2 * widthGain
-            ctx.strokeStyle = `rgba(235,26,80,${alpha})`
-            ctx.beginPath(); ctx.arc(cx,cy,r2,a0,a1,false); ctx.stroke()
-            // 轻微向内扩一圈，增强“环厚度”质感（更细、更淡）
-            const r3 = Math.max(2, rBase - v2 * innerRadiusGain)
-            const alpha2 = Math.min(1, (silent ? 0.36 : 0.22) + v2 * (silent ? 0.32 : 0.38))
-            ctx.lineWidth = Math.max(1, 1.0 + v2 * 1.0)
-            ctx.strokeStyle = `rgba(235,26,80,${alpha2})`
-            ctx.beginPath(); ctx.arc(cx,cy,r3,a0,a1,false); ctx.stroke()
+            const avg = cnt ? acc / cnt : 0
+            const amp = Math.pow(Math.min(1, avg * energyBoost * 1.8), 0.6)
+            const alpha = Math.min(1, (silent ? 0.32 : 0.2) + amp * (silent ? 0.55 : 0.75))
+            const a0 = -Math.PI / 2 + i * seg + seg * segmentGap * 0.5
+            const a1 = a0 + seg * (1 - segmentGap)
+            const outerR = rBase + amp * radiusGain
+            ctx.lineWidth = baseStroke + amp * widthGain
+            ctx.strokeStyle = toRgba(alpha)
+            ctx.beginPath(); ctx.arc(cx, cy, outerR, a0, a1, false); ctx.stroke()
+
+            const innerR = Math.max(4, rBase - amp * innerRadiusGain)
+            const innerAlpha = Math.min(1, (silent ? 0.25 : 0.16) + amp * 0.55)
+            ctx.lineWidth = 1 + amp * 1.1
+            ctx.strokeStyle = toRgba(innerAlpha)
+            ctx.beginPath(); ctx.arc(cx, cy, innerR, a0, a1, false); ctx.stroke()
           }
           ctx.shadowBlur = 0
-          phase += 0.025
         }
       }
       rafId = requestAnimationFrame(tick)
     }
     rafId = requestAnimationFrame(tick)
     return () => { if (rafId) cancelAnimationFrame(rafId) }
-  }, [themeName, ballSize, canvasSize])
+  }, [themeName, ballSize, canvasSize, toRgba, segments, segmentGap, baseStroke, radiusGain, widthGain, innerRadiusGain, shadowBlur])
+
 
   async function handlePointerDown(e: React.PointerEvent) {
     dragStartRef.current = { x: e.clientX, y: e.clientY }
@@ -741,7 +751,9 @@ function FloatBall({ themeName, bpm, conf, viz, onExit, isLockedHighlight }: { t
   const color = isLockedHighlight ? theme.textPrimary : (conf == null ? confGray : (conf >= 0.5 ? theme.textPrimary : confGray))
   const fontPx = 22
   const rootStyle: React.CSSProperties = {height:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'transparent', cursor:'default'}
+  const bpmLabelColor = hover ? accent : (themeName === 'dark' ? '#c8d2df' : '#5c606d')
   const textStyle: React.CSSProperties = {fontSize:fontPx,fontWeight:700,color,letterSpacing:1,lineHeight:fontPx + 'px'}
+  const bpmLabelStyle: React.CSSProperties = {fontSize:8,letterSpacing:2,color: bpmLabelColor,transition:'color 0.2s ease'}
   return (
     <main style={rootStyle}>
       <div
@@ -750,37 +762,45 @@ function FloatBall({ themeName, bpm, conf, viz, onExit, isLockedHighlight }: { t
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
         style={{
-          // 包裹层：更大的真实矩形用于容纳发光/外扩，保持透明
-          width:canvasSize,
-          height:canvasSize,
-          position:'relative',
-          display:'flex',
-          alignItems:'center',
-          justifyContent:'center',
-          cursor:'default',
-          background:'transparent'
+          width: canvasSize,
+          height: canvasSize + 32,
+          position: 'relative',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 10,
+          cursor: 'default',
+          background: 'transparent'
         }}
-        // 去掉“单击刷新”文案，保留双击行为
       >
-        {/* 可视化画布：更大尺寸，避免裁剪；置于最上层以显示“向内”弧线 */}
-        <canvas ref={canvasRef} width={canvasSize} height={canvasSize} style={{position:'absolute', inset:0, pointerEvents:'none', zIndex:2}} />
-        {/* 视觉圆：保持 56px，不变 */}
-        <div
-          style={{
-            width:ballSize,
-            height:ballSize,
-            borderRadius:ballSize/2,
-            background: theme.background,
-            display:'flex',
-            alignItems:'center',
-            justifyContent:'center',
-            position:'relative',
-            zIndex:1
-          }}
-        >
-          <div style={textStyle}>{Math.round(bpm||0)}</div>
+        <div style={{ position: 'relative', width: canvasSize, height: canvasSize, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <canvas
+            ref={canvasRef}
+            width={canvasSize}
+            height={canvasSize}
+            style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2, filter: 'none' }}
+          />
+          <div
+            style={{
+              width: ballSize,
+              height: ballSize,
+              borderRadius: ballSize / 2,
+              background: theme.background,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 2,
+              position: 'relative',
+              zIndex: 3,
+              boxShadow: 'none'
+            }}
+          >
+            <div style={textStyle}>{Math.round(bpm || 0)}</div>
+            <div style={bpmLabelStyle}>BPM</div>
+          </div>
         </div>
-        {/* 悬浮球刷新动画已移除 */}
       </div>
       <style>{`@keyframes spin360{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
     </main>
