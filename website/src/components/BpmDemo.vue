@@ -32,7 +32,7 @@ const props = withDefaults(
       themeToggle: '切换主题',
       pinOn: '已置顶',
       pinOff: '置顶',
-      floatingOn: '悬浮中',
+      floatingOn: '双击返回',
       floatingOff: '悬浮球'
     })
   }
@@ -80,6 +80,18 @@ const lightTheme = {
 }
 
 const theme = computed(() => (themeName.value === 'dark' ? darkTheme : lightTheme))
+const floatingWindowStyle = computed(() => {
+  if (!floating.value) return {}
+  const height = floatingCanvasEdge + 48
+  return {
+    background: 'transparent',
+    border: 'none',
+    boxShadow: 'none',
+    width: `${floatingCanvasEdge + 8}px`,
+    height: `${height}px`,
+    padding: '24px 0 10px'
+  }
+})
 
 const displayBpm = computed(() => '124')
 const metaText = computed(() => i18n.value.metaText)
@@ -97,6 +109,19 @@ function togglePin() {
 
 function toggleFloating() {
   floating.value = !floating.value
+}
+
+function exitFloatingMode() {
+  floating.value = false
+}
+
+function handleFloatingDblClick() {
+  exitFloatingMode()
+}
+
+function handleFloatingKeydown(event: KeyboardEvent) {
+  event.preventDefault()
+  exitFloatingMode()
 }
 
 function handleRefresh() {
@@ -156,8 +181,6 @@ const pulseEnvelope = (phase: number, attack: number, decay: number, curve = 1.5
   return Math.exp(-fall * (1 + curve * 0.55))
 }
 
-const floatingCanvasRef = ref<HTMLCanvasElement | null>(null)
-
 const floatingBallSize = 58
 const floatingBaseStroke = 1.68
 const floatingWidthGain = 2.24
@@ -169,6 +192,9 @@ const floatingGap = 0.12
 const floatingMargin = Math.ceil(floatingShadowBlur + (floatingBaseStroke + floatingWidthGain) / 2 + floatingRadiusGain + 2)
 const FLOATING_CANVAS_EDGE = floatingBallSize + floatingMargin * 2
 
+const floatingCanvasRef = ref<HTMLCanvasElement | null>(null)
+const floatingCanvasEdge = FLOATING_CANVAS_EDGE
+
 function hexToRgba(hex: string, alpha: number) {
   const h = hex.replace('#', '')
   if (h.length !== 3 && h.length !== 6) return `rgba(235,26,80,${alpha})`
@@ -178,6 +204,10 @@ function hexToRgba(hex: string, alpha: number) {
   const g = (num >> 8) & 255
   const b = num & 255
   return `rgba(${r},${g},${b},${alpha})`
+}
+
+function colorWithAlpha(color: string, alpha: number) {
+  return color.startsWith('#') ? hexToRgba(color, alpha) : color
 }
 
 let floatingRafId: number | null = null
@@ -213,6 +243,16 @@ function renderFloatingFrame() {
   const silent = rms <= 0.002
   const energyBoost = Math.min(2.2, 0.85 + rms * 2.4)
   const rBase = Math.max(8, floatingBallSize / 2 - floatingBaseStroke / 2 + floatingRadiusGain)
+
+  const ballBg = theme.value.panel ?? theme.value.background ?? '#14060a'
+  ctx.save()
+  ctx.shadowColor = hexToRgba(accent, 0.35)
+  ctx.shadowBlur = floatingShadowBlur * 0.8
+  ctx.fillStyle = colorWithAlpha(ballBg, 0.92)
+  ctx.beginPath()
+  ctx.arc(cx, cy, floatingBallSize / 2, 0, Math.PI * 2, false)
+  ctx.fill()
+  ctx.restore()
 
   ctx.save()
   ctx.shadowBlur = 0
@@ -255,6 +295,19 @@ function renderFloatingFrame() {
     ctx.arc(cx, cy, innerR, a0, a1, false)
     ctx.stroke()
   }
+
+  const textColor = theme.value.textPrimary ?? '#ffffff'
+  const bpmFontSize = floatingBallSize * 0.38
+  const labelFontSize = floatingBallSize * 0.14
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillStyle = textColor
+  ctx.font = `700 ${bpmFontSize}px 'Space Grotesk', 'Inter', 'Segoe UI', sans-serif`
+  ctx.fillText(displayBpm.value, cx, cy - floatingBallSize * 0.04)
+
+  ctx.font = `600 ${labelFontSize}px 'Space Grotesk', 'Inter', 'Segoe UI', sans-serif`
+  ctx.fillStyle = hexToRgba(textColor, 0.75)
+  ctx.fillText('BPM', cx, cy + floatingBallSize * 0.3)
 }
 
 async function startFloatingLoop() {
@@ -398,27 +451,51 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="demo-window" :style="{ background: theme.background, color: theme.textPrimary }">
-    <div class="title">BPM</div>
-    <div class="bpm-display" :style="{ color: bpmColor }">
-      {{ displayBpm }}
-    </div>
-    <div class="meta-line">
-      {{ metaText }}
-      <span class="conf" :style="{ color: confColor }">{{ confText }}</span>
-    </div>
-    <VizPanel
-      class="viz-panel-shell"
-      :theme="theme"
-      :hide-rms="false"
-      :viz="viz"
-      :mode="vizMode"
-      :theme-name="themeName"
-      :width="350"
-      :base-height="150"
-      @toggle="cycleVizMode"
-    />
-    <div class="actions">
+  <div
+    class="demo-window"
+    :class="{ 'floating-mode': floating }"
+    :style="[{ background: theme.background, color: theme.textPrimary }, floatingWindowStyle]"
+  >
+    <transition name="demo-fade">
+      <div v-if="!floating" class="demo-body">
+        <div class="title">BPM</div>
+        <div class="bpm-display" :style="{ color: bpmColor }">
+          {{ displayBpm }}
+        </div>
+        <div class="meta-line">
+          {{ metaText }}
+          <span class="conf" :style="{ color: confColor }">{{ confText }}</span>
+        </div>
+        <VizPanel
+          class="viz-panel-shell"
+          :theme="theme"
+          :hide-rms="false"
+          :viz="viz"
+          :mode="vizMode"
+          :theme-name="themeName"
+          :width="350"
+          :base-height="150"
+          @toggle="cycleVizMode"
+        />
+      </div>
+    </transition>
+    <transition name="floating-fade">
+      <div
+        v-if="floating"
+        class="floating-preview"
+        role="button"
+        tabindex="0"
+        :title="i18n.floatingOn"
+        :aria-label="i18n.floatingOn"
+        @dblclick="handleFloatingDblClick"
+        @keydown.enter.prevent="handleFloatingKeydown"
+        @keydown.space.prevent="handleFloatingKeydown"
+      >
+        <canvas ref="floatingCanvasRef" class="floating-canvas" aria-hidden="true"></canvas>
+        <span class="floating-label">{{ i18n.floatingOn }}</span>
+      </div>
+    </transition>
+    <div class="actions" v-if="!floating">
       <button class="icon-btn" :title="i18n.refresh" @click="handleRefresh">
         <img
           :src="refreshIcon"
@@ -452,6 +529,7 @@ onUnmounted(() => {
   border-radius: 5px;
   padding: 50px 10px 24px;
   position: relative;
+  overflow: hidden;
   box-shadow:
     0 25px 60px rgba(0, 0, 0, 0.55),
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
@@ -460,6 +538,26 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   gap: 0;
+}
+
+.demo-window.floating-mode {
+  width: auto;
+  height: auto;
+  min-height: 0;
+  padding: 24px 0 14px;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  overflow: visible;
+  gap: 12px;
+}
+
+.demo-body {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
 .actions {
@@ -558,5 +656,61 @@ onUnmounted(() => {
   width: 100%;
   display: flex;
   justify-content: center;
+}
+
+.floating-preview {
+  width: 100%;
+  min-width: 110px;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  cursor: pointer;
+  user-select: none;
+  text-align: center;
+}
+
+.floating-canvas {
+  display: block;
+  pointer-events: none;
+  filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.4));
+  border-radius: 999px;
+}
+
+.floating-label {
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: none;
+  font-weight: 600;
+  color: v-bind('theme.subduedText');
+}
+
+.floating-fade-enter-active,
+.floating-fade-leave-active {
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.floating-fade-enter-from,
+.floating-fade-leave-to {
+  opacity: 0;
+  transform: translateY(6px) scale(0.96);
+}
+
+.demo-fade-enter-active,
+.demo-fade-leave-active {
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.demo-fade-enter-from,
+.demo-fade-leave-to {
+  opacity: 0;
+  transform: translateY(14px);
+}
+
+.floating-preview:focus-visible {
+  outline: 1px dashed rgba(235, 26, 80, 0.6);
+  outline-offset: 6px;
 }
 </style>

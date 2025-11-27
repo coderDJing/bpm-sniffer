@@ -155,7 +155,7 @@ const translations: Record<SiteLang, TranslationEntry> = {
       themeToggle: '切换主题',
       pinOn: '已置顶',
       pinOff: '置顶',
-      floatingOn: '悬浮中',
+      floatingOn: '双击返回',
       floatingOff: '悬浮球'
     },
     seo: {
@@ -210,7 +210,7 @@ const translations: Record<SiteLang, TranslationEntry> = {
       themeToggle: 'Toggle theme',
       pinOn: 'Pinned',
       pinOff: 'Pin window',
-      floatingOn: 'Floating',
+      floatingOn: 'Double-tap to return',
       floatingOff: 'Floating widget'
     },
     seo: {
