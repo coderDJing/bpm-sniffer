@@ -192,22 +192,6 @@ export default function App() {
           }
         } catch {}
 
-        // 仅靠后端初始化语言；前端不再覆盖后端语言
-        await invoke('start_capture')
-        // 获取应用版本号
-        try { const v = await getVersion(); setAppVersion(v) } catch {}
-        // 静默检查并下载更新（可达性自动选择端点）
-        try {
-          const update = await check()
-          if (update?.available) {
-            await update.downloadAndInstall()
-            // 轻提示：已更新完毕，下次重启生效（需要用户手动关闭）
-            setUpdateReady(true)
-            // 可选：不自动重启，保留当前会话；如需立即生效可调用 relaunch()
-          }
-        } catch {}
-
-        
         const unlistenA = await listen<DisplayBpm>('bpm_update', (e) => {
           const res = e.payload
           // 计算即将展示的 BPM（后端传 0 则沿用上一值），并基于“显示整数值”进行比较/锁定
@@ -278,6 +262,21 @@ export default function App() {
           }
         })
         removeListener = () => { if (removeMql) removeMql(); unlistenA(); unlistenD() }
+
+        // 仅靠后端初始化语言；前端不再覆盖后端语言
+        await invoke('start_capture')
+        // 获取应用版本号
+        try { const v = await getVersion(); setAppVersion(v) } catch {}
+        // 静默检查并下载更新（可达性自动选择端点）
+        try {
+          const update = await check()
+          if (update?.available) {
+            await update.downloadAndInstall()
+            // 轻提示：已更新完毕，下次重启生效（需要用户手动关闭）
+            setUpdateReady(true)
+            // 可选：不自动重启，保留当前会话；如需立即生效可调用 relaunch()
+          }
+        } catch {}
       } catch (err) { console.error(tn('[启动] 错误', '[BOOT] error'), err) }
     })()
 
