@@ -97,8 +97,10 @@ fn main() {
                 .build()?;
 
             let icon = app.default_window_icon().cloned();
+            let tooltip = if is_log_zh() { "BPM Sniffer 正在运行" } else { "BPM Sniffer is running" };
             let mut tray_builder = TrayIconBuilder::new()
                 .menu(&menu)
+                .tooltip(tooltip)
                 .on_menu_event(|app, event| {
                     match event.id().as_ref() {
                         "logs" => {
