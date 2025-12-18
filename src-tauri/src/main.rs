@@ -1,18 +1,22 @@
-#![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
 
 #[cfg(target_os = "windows")]
 mod audio;
 mod bpm;
-mod tempo;
-mod lang;
-mod state;
-mod logging;
 mod capture;
 mod commands;
+mod key;
+mod lang;
+mod logging;
+mod state;
+mod tempo;
 
 // 已迁移：logging 内部使用文件系统
 
-use tauri::{Manager};
+use tauri::Manager;
 // use tauri::window::Color; // not needed currently
 use tauri_plugin_single_instance::init as single_instance;
 // use tauri_plugin_updater::UpdaterExt;
@@ -38,22 +42,32 @@ fn main() {
             let hcu = RegKey::predef(HKEY_CURRENT_USER);
             if let Ok(cp) = hcu.open_subkey("Control Panel\\International") {
                 if let Ok(name) = cp.get_value::<String, _>("LocaleName") {
-                    let s = name.to_lowercase(); zh = s.starts_with("zh");
+                    let s = name.to_lowercase();
+                    zh = s.starts_with("zh");
                 }
             }
             if !zh {
                 let hku = RegKey::predef(HKEY_USERS);
                 if let Ok(def) = hku.open_subkey(".DEFAULT\\Control Panel\\International") {
                     if let Ok(name) = def.get_value::<String, _>("LocaleName") {
-                        let s = name.to_lowercase(); zh = s.starts_with("zh");
+                        let s = name.to_lowercase();
+                        zh = s.starts_with("zh");
                     }
                 }
             }
         }
         #[cfg(not(target_os = "windows"))]
         {
-            if let Ok(lang) = std::env::var("LANG") { let s = lang.to_lowercase(); zh = s.starts_with("zh") || s.contains("zh_cn") || s.contains("zh-hans"); }
-            if !zh { if let Ok(oslang) = std::env::var("OSLANG") { let s = oslang.to_lowercase(); zh = s.starts_with("zh"); } }
+            if let Ok(lang) = std::env::var("LANG") {
+                let s = lang.to_lowercase();
+                zh = s.starts_with("zh") || s.contains("zh_cn") || s.contains("zh-hans");
+            }
+            if !zh {
+                if let Ok(oslang) = std::env::var("OSLANG") {
+                    let s = oslang.to_lowercase();
+                    zh = s.starts_with("zh");
+                }
+            }
         }
         set_log_lang_zh(zh);
     }
@@ -68,7 +82,9 @@ fn main() {
         .plugin(updater_builder.build())
         .plugin(tauri_plugin_opener::init())
         .plugin(single_instance(|app, _args, _cwd| {
-            if let Some(win) = app.get_webview_window("main") { let _ = win.set_focus(); }
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.set_focus();
+            }
         }))
         .on_window_event(|window, event| {
             use tauri::WindowEvent;
@@ -84,7 +100,17 @@ fn main() {
             let handle = app.handle();
             logging::setup_logging(&handle);
             // 输出一次当前日志语言（用于确认）
-            if is_log_zh() { logging::append_log_line("[LANG] 日志语言=中文"); eprintln!("[语言] 日志输出：中文"); } else { logging::append_log_line("[LANG] log language=EN"); eprintln!("[LANG] log language: EN"); }
+            if is_log_zh() {
+                logging::append_log_line("[LANG] 日志语言=中文");
+                if logging::EMIT_TEXT_LOGS {
+                    eprintln!("[语言] 日志输出：中文");
+                }
+            } else {
+                logging::append_log_line("[LANG] log language=EN");
+                if logging::EMIT_TEXT_LOGS {
+                    eprintln!("[LANG] log language: EN");
+                }
+            }
             // 系统托盘与菜单（多语言）
             let logs_label = if is_log_zh() { "分析日志" } else { "Logs" };
             let about_label = if is_log_zh() { "关于" } else { "About" };
@@ -97,7 +123,11 @@ fn main() {
                 .build()?;
 
             let icon = app.default_window_icon().cloned();
-            let tooltip = if is_log_zh() { "BPM Sniffer 正在运行" } else { "BPM Sniffer is running" };
+            let tooltip = if is_log_zh() {
+                "BPM Sniffer 正在运行"
+            } else {
+                "BPM Sniffer is running"
+            };
             let mut tray_builder = TrayIconBuilder::new()
                 .menu(&menu)
                 .tooltip(tooltip)
@@ -108,11 +138,15 @@ fn main() {
                                 let _ = win.set_focus();
                             } else {
                                 let title = if is_log_zh() { "分析日志" } else { "Logs" };
-                                let _ = WebviewWindowBuilder::new(app, "logs", WebviewUrl::App("index.html#logs".into()))
-                                    .title(title)
-                                    .resizable(true)
-                                    .inner_size(560.0, 420.0)
-                                    .build();
+                                let _ = WebviewWindowBuilder::new(
+                                    app,
+                                    "logs",
+                                    WebviewUrl::App("index.html#logs".into()),
+                                )
+                                .title(title)
+                                .resizable(true)
+                                .inner_size(560.0, 420.0)
+                                .build();
                             }
                         }
                         "about" => {
@@ -120,11 +154,15 @@ fn main() {
                                 let _ = win.set_focus();
                             } else {
                                 // dev / prod 不同 URL
-                                let _ = WebviewWindowBuilder::new(app, "about", WebviewUrl::App("index.html#about".into()))
-                                    .title("About BPM Sniffer")
-                                    .resizable(false)
-                                    .inner_size(360.0, 360.0)
-                                    .build();
+                                let _ = WebviewWindowBuilder::new(
+                                    app,
+                                    "about",
+                                    WebviewUrl::App("index.html#about".into()),
+                                )
+                                .title("About BPM Sniffer")
+                                .resizable(false)
+                                .inner_size(360.0, 360.0)
+                                .build();
                             }
                         }
                         "quit" => {
@@ -133,17 +171,22 @@ fn main() {
                         _ => {}
                     }
                 });
-            if let Some(ic) = icon { tray_builder = tray_builder.icon(ic); }
-            
+            if let Some(ic) = icon {
+                tray_builder = tray_builder.icon(ic);
+            }
+
             let _ = tray_builder.build(app)?;
 
             // DPI 感知：使用逻辑尺寸设置窗口初始/最小尺寸，允许用户自由放大
             if let Some(win) = app.get_webview_window("main") {
                 if let Ok(scale) = win.scale_factor() {
                     let _ = scale; // 仅保留查询，逻辑尺寸无需手动乘缩放
-                    let base_w = 390.0f64; let base_h = 390.0f64; // 初始逻辑尺寸
-                    let min_w = 220.0f64; let min_h = 120.0f64;   // 最小逻辑尺寸
-                    let max_w = 560.0f64; let max_h = 560.0f64;   // 最大逻辑尺寸（限制用户拉大）
+                    let base_w = 390.0f64;
+                    let base_h = 390.0f64; // 初始逻辑尺寸
+                    let min_w = 220.0f64;
+                    let min_h = 120.0f64; // 最小逻辑尺寸
+                    let max_w = 560.0f64;
+                    let max_h = 560.0f64; // 最大逻辑尺寸（限制用户拉大）
                     let _ = win.set_min_size(Some(Size::Logical(LogicalSize::new(min_w, min_h))));
                     let _ = win.set_max_size(Some(Size::Logical(LogicalSize::new(max_w, max_h))));
                     let _ = win.set_size(Size::Logical(LogicalSize::new(base_w, base_h)));

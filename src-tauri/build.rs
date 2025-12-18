@@ -1,4 +1,7 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 fn logo_dir() -> PathBuf {
     // 构建脚本当前工作目录为 crate 根（src-tauri）
@@ -13,7 +16,9 @@ fn generate_icon_from_logo(dst: &Path) -> bool {
 
     for sz in sizes {
         let png = base.join(format!("{sz}.png"));
-        if !png.exists() { continue; }
+        if !png.exists() {
+            continue;
+        }
         match image::open(&png) {
             Ok(dynimg) => {
                 let img = dynimg.to_rgba8();
@@ -29,27 +34,41 @@ fn generate_icon_from_logo(dst: &Path) -> bool {
         }
     }
 
-    if !found_any { return false; }
+    if !found_any {
+        return false;
+    }
 
-    if let Some(parent) = dst.parent() { let _ = fs::create_dir_all(parent); }
+    if let Some(parent) = dst.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
     let mut bytes = Vec::new();
     if ico_dir.write(&mut bytes).is_ok() {
-        if fs::write(dst, bytes).is_ok() { return true; }
+        if fs::write(dst, bytes).is_ok() {
+            return true;
+        }
     }
     false
 }
 
 fn generate_placeholder_icon(dst: &Path) {
-    if let Some(parent) = dst.parent() { let _ = fs::create_dir_all(parent); }
+    if let Some(parent) = dst.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
     let size = 256u32;
     let mut img = image::RgbaImage::new(size, size);
-    for p in img.pixels_mut() { *p = image::Rgba([0x1a, 0x26, 0x33, 0xff]); }
+    for p in img.pixels_mut() {
+        *p = image::Rgba([0x1a, 0x26, 0x33, 0xff]);
+    }
     let dyn_img = image::DynamicImage::ImageRgba8(img);
     let mut ico = ico::IconDir::new(ico::ResourceType::Icon);
     let entry = ico::IconImage::from_rgba_data(size, size, dyn_img.to_rgba8().into_raw());
-    if let Ok(e) = ico::IconDirEntry::encode(&entry) { ico.add_entry(e); }
+    if let Ok(e) = ico::IconDirEntry::encode(&entry) {
+        ico.add_entry(e);
+    }
     let mut bytes = Vec::new();
-    if ico.write(&mut bytes).is_ok() { let _ = fs::write(dst, bytes); }
+    if ico.write(&mut bytes).is_ok() {
+        let _ = fs::write(dst, bytes);
+    }
 }
 
 fn ensure_icon() {
@@ -70,19 +89,22 @@ fn ensure_icon() {
         .map(|sz| logo_dir().join(format!("{sz}.png")))
         .collect::<Vec<_>>();
 
-    let ico_mtime = fs::metadata(icon_path)
-        .and_then(|m| m.modified())
-        .ok();
+    let ico_mtime = fs::metadata(icon_path).and_then(|m| m.modified()).ok();
 
     let mut need_regen = false;
     for p in &srcs {
-        if !p.exists() { continue; }
+        if !p.exists() {
+            continue;
+        }
         let newer = fs::metadata(p)
             .and_then(|m| m.modified())
             .ok()
             .map(|t| ico_mtime.map_or(true, |it| t > it))
             .unwrap_or(false);
-        if newer { need_regen = true; break; }
+        if newer {
+            need_regen = true;
+            break;
+        }
     }
 
     if need_regen {
