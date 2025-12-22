@@ -66,6 +66,8 @@ pub struct KeyConfig {
     pub ema_window_sec: f32,
     // tonalness 需要更快响应（区别于 key 的长窗平滑）
     pub tonal_window_sec: f32,
+    // 模式（大小调）判别：根据 3 度能量给轻微偏置
+    pub mode_third_bonus: f32,
     pub warmup_sec: f32,
     pub update_interval_ms: u64,
     pub min_level: f32,
@@ -95,6 +97,7 @@ impl Default for KeyConfig {
             mag_gamma: 0.5,
             ema_window_sec: 12.0,
             tonal_window_sec: 2.0,
+            mode_third_bonus: 0.06,
             warmup_sec: 4.0,
             update_interval_ms: 500,
             min_level: 0.03,
@@ -146,6 +149,7 @@ pub struct KeyEngine {
     last_update_ms: u64,
     major_tmpl: [f32; 12],
     minor_tmpl: [f32; 12],
+    minor_harm_tmpl: [f32; 12],
 }
 
 impl KeyEngine {
@@ -154,7 +158,7 @@ impl KeyEngine {
     }
 
     pub fn with_config(sample_rate: u32, cfg: KeyConfig) -> Self {
-        let (major_tmpl, minor_tmpl) = build_templates(cfg.key_profile);
+        let (major_tmpl, minor_tmpl, minor_harm_tmpl) = build_templates(cfg.key_profile);
         Self {
             cfg,
             sample_rate,
@@ -167,6 +171,7 @@ impl KeyEngine {
             last_update_ms: 0,
             major_tmpl,
             minor_tmpl,
+            minor_harm_tmpl,
         }
     }
 
@@ -263,8 +268,10 @@ impl KeyEngine {
                 &chroma,
                 &self.major_tmpl,
                 &self.minor_tmpl,
+                &self.minor_harm_tmpl,
                 bass_hint,
                 self.cfg.bass_tonic_bonus,
+                self.cfg.mode_third_bonus,
             );
 
             let score = best.score;
@@ -646,7 +653,7 @@ fn top_two_peaks(v: &[f32; 12]) -> (f32, f32) {
     (best, second)
 }
 
-fn build_templates(profile: KeyProfile) -> ([f32; 12], [f32; 12]) {
+fn build_templates(profile: KeyProfile) -> ([f32; 12], [f32; 12], [f32; 12]) {
     match profile {
         KeyProfile::KrumhanslSchmuckler => {
             // Krumhansl–Schmuckler key profiles（未归一化）
@@ -656,7 +663,14 @@ fn build_templates(profile: KeyProfile) -> ([f32; 12], [f32; 12]) {
             let minor = [
                 6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17,
             ];
-            (normalize_template(major), normalize_template(minor))
+            let mut minor_harm = minor;
+            minor_harm[10] *= 0.55;
+            minor_harm[11] *= 1.35;
+            (
+                normalize_template(major),
+                normalize_template(minor),
+                normalize_template(minor_harm),
+            )
         }
         KeyProfile::EdmTriadV1 => {
             // EDM 启发式 profile：
@@ -669,7 +683,14 @@ fn build_templates(profile: KeyProfile) -> ([f32; 12], [f32; 12]) {
             let minor = [
                 1.00, 0.15, 0.50, 0.85, 0.25, 0.55, 0.15, 0.90, 0.65, 0.15, 0.65, 0.30,
             ];
-            (normalize_template(major), normalize_template(minor))
+            let minor_harm = [
+                1.00, 0.15, 0.50, 0.85, 0.25, 0.55, 0.15, 0.90, 0.65, 0.15, 0.20, 0.70,
+            ];
+            (
+                normalize_template(major),
+                normalize_template(minor),
+                normalize_template(minor_harm),
+            )
         }
     }
 }
@@ -691,8 +712,10 @@ fn best_two_candidates_with_hint(
     chroma: &[f32; 12],
     major: &[f32; 12],
     minor: &[f32; 12],
+    minor_harm: &[f32; 12],
     bass_hint: Option<BassHint>,
     bass_tonic_bonus: f32,
+    mode_third_bonus: f32,
 ) -> (KeyCandidate, KeyCandidate) {
     let mut best = KeyCandidate {
         mode: KeyMode::Major,
@@ -702,7 +725,8 @@ fn best_two_candidates_with_hint(
     let mut second = best;
     for tonic in 0..12 {
         let bonus = bass_bonus(tonic, bass_hint, bass_tonic_bonus);
-        let s = rotated_corr(chroma, major, tonic) + bonus;
+        let (major_bias, minor_bias) = mode_third_bias(chroma, tonic, mode_third_bonus);
+        let s = rotated_corr(chroma, major, tonic) + bonus + major_bias;
         update_best2(
             KeyCandidate {
                 mode: KeyMode::Major,
@@ -712,7 +736,9 @@ fn best_two_candidates_with_hint(
             &mut best,
             &mut second,
         );
-        let s = rotated_corr(chroma, minor, tonic) + bonus;
+        let s_nat = rotated_corr(chroma, minor, tonic);
+        let s_harm = rotated_corr(chroma, minor_harm, tonic);
+        let s = s_nat.max(s_harm) + bonus + minor_bias;
         update_best2(
             KeyCandidate {
                 mode: KeyMode::Minor,
@@ -726,6 +752,23 @@ fn best_two_candidates_with_hint(
     (best, second)
 }
 
+fn mode_third_bias(chroma: &[f32; 12], tonic: usize, bonus: f32) -> (f32, f32) {
+    if bonus <= 0.0 {
+        return (0.0, 0.0);
+    }
+    let m3 = chroma[(tonic + 3) % 12];
+    let m3 = if m3.is_finite() { m3 } else { 0.0 };
+    let maj3 = chroma[(tonic + 4) % 12];
+    let maj3 = if maj3.is_finite() { maj3 } else { 0.0 };
+    let sum = m3 + maj3;
+    if sum <= 1e-6 {
+        return (0.0, 0.0);
+    }
+    let diff = (maj3 - m3) / sum;
+    let major_bias = (diff.max(0.0) * bonus).clamp(0.0, bonus);
+    let minor_bias = ((-diff).max(0.0) * bonus).clamp(0.0, bonus);
+    (major_bias, minor_bias)
+}
 #[derive(Clone, Copy, Debug)]
 struct BassHint {
     tonic: usize,
