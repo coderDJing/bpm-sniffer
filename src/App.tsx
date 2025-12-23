@@ -642,7 +642,7 @@ export default function App() {
             setKeyMode(m => m === 'note' ? 'camelot' : 'note')
             setKeyIconTick((t) => t + 1)
           }}
-          title={keyMode === 'camelot' ? 'Alphanumeric' : 'Classic'}
+          title={keyMode === 'camelot' ? 'camelot' : 'Classic'}
           style={{
             background:'transparent',
             border:'none',
