@@ -524,9 +524,10 @@ impl KeyEngine {
             let score = best.score;
             let score2 = second.score;
             let gap = (score - score2).max(0.0);
-            let score_n = (score / 0.70).clamp(0.0, 1.0);
-            let gap_n = (gap / 0.15).clamp(0.0, 1.0);
-            let confidence = (0.35 * score_n + 0.65 * gap_n).clamp(0.0, 1.0);
+            let score_n = (score / 0.60).clamp(0.0, 1.0);
+            let gap_n = (gap / 0.10).clamp(0.0, 1.0);
+            // 提高绝对匹配度权重，避免 gap 小导致长期低置信度
+            let confidence = (0.55 * score_n + 0.45 * gap_n).clamp(0.0, 1.0);
 
             let state = if confidence >= self.cfg.tau_high {
                 "tracking"

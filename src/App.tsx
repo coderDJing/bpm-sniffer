@@ -45,12 +45,15 @@ export default function App() {
   const manualModeRef = useRef<boolean>(false)
   const mqlCleanupRef = useRef<null | (() => void)>(null)
   const keyHoldRef = useRef<{ note: string | null, camelot: string | null }>({ note: null, camelot: null })
+  const keyConfEmaRef = useRef<number | null>(null)
+  const keyConfKeyRef = useRef<string | null>(null)
   // 高亮锁：当某个值在高置信度下被高亮后，如果之后收到同值但低置信度的数据，仍保持高亮，直到值发生变化
   const bpmRef = useRef<number | null>(null)
   const highlightLockRef = useRef<{ locked: boolean, bpm: number | null }>({ locked: false, bpm: null })
   // 低置信度同值连续计数：当灰显同值连续达到阈值（如5）时，自动视为需要高亮
   const lowConfStreakRef = useRef<{ bpm: number | null, count: number }>({ bpm: null, count: 0 })
   const lowConfPromoteThreshold = 5
+  const keyConfAlpha = 0.5
   const manualTapTimesRef = useRef<number[]>([])
 
   useEffect(() => {
@@ -259,11 +262,22 @@ export default function App() {
         })
         const unlistenK = await listen<DisplayKey>('key_update', (e) => {
           const res = e.payload
-          setKeyConf(res.confidence)
-          setKeyState(res.state)
           const incomingNote = res.key
           const incomingCamelot = res.camelot
           const valid = incomingNote !== '-' && incomingCamelot !== '-'
+          const keyId = valid ? `${incomingNote}|${incomingCamelot}` : '-'
+          let nextKeyConf = res.confidence
+          const shouldReset = !valid || res.state === 'analyzing' || res.state === 'atonal' || keyConfKeyRef.current !== keyId
+          if (shouldReset) {
+            keyConfEmaRef.current = nextKeyConf
+            keyConfKeyRef.current = keyId
+          } else {
+            const prev = keyConfEmaRef.current ?? nextKeyConf
+            nextKeyConf = prev * (1 - keyConfAlpha) + nextKeyConf * keyConfAlpha
+            keyConfEmaRef.current = nextKeyConf
+          }
+          setKeyConf(nextKeyConf)
+          setKeyState(res.state)
           if (res.state === 'tracking' && valid && res.confidence >= 0.55) {
             keyHoldRef.current = { note: incomingNote, camelot: incomingCamelot }
             setKeyNote(incomingNote)
