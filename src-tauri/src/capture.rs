@@ -241,12 +241,11 @@ pub fn run_capture(app: AppHandle) -> Result<()> {
                                 && (last_key_print.map_or(true, |k| k != display_key)
                                     || nowv.saturating_sub(last_key_print_ms) >= print_gap_ms);
                             if should_print && EMIT_KEY_LOGS {
-                                let txt = if is_log_zh() {
-                                    format!("[调性] {} 置信度={:.2} 分数={:.2} gap={:.2} 次选={}({:.2}) 状态={} 有效={:.1}s 电平={:.2}", key_show, decision.raw.confidence, decision.raw.score, decision.raw.gap, top2, decision.raw.score2, decision.state, decision.raw.effective_sec, lvl)
-                                } else {
-                                    format!("[KEY] {} conf={:.2} score={:.2} gap={:.2} top2={}({:.2}) state={} eff={:.1}s lvl={:.2}", key_show, decision.raw.confidence, decision.raw.score, decision.raw.gap, top2, decision.raw.score2, decision.state, decision.raw.effective_sec, lvl)
-                                };
+                                let txt_zh = format!("[调性] {} 置信度={:.2} 分数={:.2} gap={:.2} 次选={}({:.2}) 状态={} 有效={:.1}s 电平={:.2}", key_show, decision.raw.confidence, decision.raw.score, decision.raw.gap, top2, decision.raw.score2, decision.state, decision.raw.effective_sec, lvl);
+                                let txt_en = format!("[KEY] {} conf={:.2} score={:.2} gap={:.2} top2={}({:.2}) state={} eff={:.1}s lvl={:.2}", key_show, decision.raw.confidence, decision.raw.score, decision.raw.gap, top2, decision.raw.score2, decision.state, decision.raw.effective_sec, lvl);
+                                let txt = if is_log_zh() { &txt_zh } else { &txt_en };
                                 eprintln!("{}", txt);
+                                emit_friendly(&app, txt_zh, txt_en);
                                 last_key_print = Some(display_key);
                                 last_key_print_ms = nowv;
                             }
