@@ -335,6 +335,9 @@ export default function App() {
       if (e.key === 'bpm_theme') {
         const v = e.newValue
         if (v === 'dark' || v === 'light') setThemeName(v)
+      } else if (e.key === 'key_mode') {
+        const v = e.newValue
+        if (v === 'note' || v === 'camelot') setKeyMode(v)
       }
     }
     window.addEventListener('storage', onStorage)
@@ -408,6 +411,12 @@ export default function App() {
   const bpmBright = !manualMode && (isLockedHighlight || (conf != null && conf >= 0.5))
   const slashColor = (bpmBright && keyStable) ? theme.textPrimary : theme.confGray
   const keyModeIcon = keyMode === 'camelot' ? keyCamelotIcon : keyNoteIcon
+  const viewH = typeof window !== 'undefined' ? window.innerHeight : 0
+  const layoutDensity = viewH < 320 ? 'tight' : viewH < 380 ? 'compact' : 'normal'
+  const mainGap = layoutDensity === 'normal' ? 16 : layoutDensity === 'compact' ? 12 : 8
+  const metaPaddingTop = layoutDensity === 'normal' ? 10 : layoutDensity === 'compact' ? 8 : 6
+  const metaGap = layoutDensity === 'normal' ? 4 : 3
+  const vizMarginBottom = layoutDensity === 'normal' ? 7 : layoutDensity === 'compact' ? 5 : 3
 
   // 已固定后端为基础模式，无切换
 
@@ -436,10 +445,10 @@ export default function App() {
       const h = window.innerHeight
       const w = window.innerWidth
       // 粗略阈值：根据当前组件布局估算
-      setHideRms(h < 350)
-      setHideViz(h < 320)
-      setHideTitle(h < 180)
-      setHideMeta(h < 160)
+      setHideRms(h < 360)
+      setHideViz(h < 330)
+      setHideTitle(h < 200)
+      setHideMeta(h < 180)
       setHideActions(w < 380)
       // 强制一次轻量刷新，确保宽度自适应在静态画面时也更新
       setSizeTick((t) => (t + 1) % 1000000)
@@ -471,12 +480,25 @@ export default function App() {
 
   if (route === '#float') {
     return (
-      <FloatBall themeName={themeName} bpm={bpmRef.current ?? 0} conf={conf} viz={viz} onExit={async () => { try { await invoke('exit_floating') } catch {} }} isLockedHighlight={isLockedHighlight} />
+      <FloatBall
+        themeName={themeName}
+        bpm={bpmRef.current ?? 0}
+        conf={conf}
+        viz={viz}
+        keyMode={keyMode}
+        keyNote={keyNote}
+        keyCamelot={keyCamelot}
+        keyConf={keyConf}
+        keyState={keyState}
+        showWaiting={showWaiting}
+        onExit={async () => { try { await invoke('exit_floating') } catch {} }}
+        isLockedHighlight={isLockedHighlight}
+      />
     )
   }
 
   return (
-    <main style={{height:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent: hideViz ? 'center' : 'flex-start',gap:16,background:theme.background,color:theme.textPrimary,overflow:'hidden'}}>
+    <main style={{height:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent: hideViz ? 'center' : 'flex-start',gap:mainGap,background:theme.background,color:theme.textPrimary,overflow:'hidden'}}>
       {updateReady && (
         <div style={{position:'fixed',left:'50%',transform:'translateX(-50%)',bottom:16,background:theme.panelBg,border:'1px solid #1d2a3a',borderRadius:8,padding:'10px 12px',display:'flex',alignItems:'center',gap:10,zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.35)',minWidth:'min(360px, calc(100vw - 32px))',maxWidth:'calc(100vw - 32px)',flexWrap:'nowrap',justifyContent:'flex-start'}}>
           <span style={{fontSize:12,color:theme.textPrimary,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',flex:'1 1 auto',minWidth:0}}>{t('update_ready')}</span>
@@ -496,14 +518,14 @@ export default function App() {
         </div>
         {!hideMeta && (
           manualMode ? (
-            <div style={{fontSize:14,color:theme.textSecondary,paddingTop:'10px',display:'flex',flexDirection:'column',alignItems:'center',gap:4}}>
+            <div style={{fontSize:14,color:theme.textSecondary,paddingTop:metaPaddingTop,display:'flex',flexDirection:'column',alignItems:'center',gap:metaGap}}>
               <div>{t('manual_exit_hint')}</div>
               <div>
                 {keyLabel} · {t('conf_label')}<span style={{color: keyConfColor}}>{keyConfLabel}</span>
               </div>
             </div>
           ) : (
-            <div style={{fontSize:14,color:theme.textSecondary,paddingTop:'10px',display:'flex',flexDirection:'column',alignItems:'center',gap:4}}>
+            <div style={{fontSize:14,color:theme.textSecondary,paddingTop:metaPaddingTop,display:'flex',flexDirection:'column',alignItems:'center',gap:metaGap}}>
               <div>
                 {label} · {t('conf_label')}<span style={{color: confColor}}>{confLabel}</span>
               </div>
@@ -517,7 +539,7 @@ export default function App() {
 
       {/* 简易波形可视化 */}
       {!hideViz && (
-        <div style={{marginTop:'auto', marginBottom:7}}>
+        <div style={{marginTop:'auto', marginBottom:vizMarginBottom}}>
           <VizPanel theme={theme} hideRms={hideRms} viz={viz} mode={vizMode} onToggle={() => setVizMode(m => m==='wave' ? 'bars' : (m==='bars' ? 'waterfall' : 'wave'))} themeName={themeName} />
         </div>
       )}
@@ -691,19 +713,20 @@ export default function App() {
   )
 }
 
-function FloatBall({ themeName, bpm, conf, viz, onExit, isLockedHighlight }: { themeName: 'dark'|'light', bpm: number, conf: number | null, viz: AudioViz | null, onExit: () => Promise<void>, isLockedHighlight: boolean }) {
+function FloatBall({ themeName, bpm, conf, viz, keyMode, keyNote, keyCamelot, keyConf, keyState, showWaiting, onExit, isLockedHighlight }: { themeName: 'dark'|'light', bpm: number, conf: number | null, viz: AudioViz | null, keyMode: 'note'|'camelot', keyNote: string | null, keyCamelot: string | null, keyConf: number | null, keyState: DisplayKey['state'], showWaiting: boolean, onExit: () => Promise<void>, isLockedHighlight: boolean }) {
   const darkTheme = {
     background: 'rgba(20,6,10,0.82)',
     textPrimary: '#ffffff',
-    ring: '#eb1a50'
+    ring: '#eb1a50',
+    confGray: '#9aa3ab'
   }
   const lightTheme = {
     background: 'rgba(255,244,247,0.82)',
     textPrimary: '#1b0a10',
-    ring: '#eb1a50'
+    ring: '#eb1a50',
+    confGray: '#8a8f96'
   }
   const theme = themeName === 'dark' ? darkTheme : lightTheme
-  const [hover, setHover] = React.useState(false)
   const lastClickRef = React.useRef<number>(0)
   const dragStartRef = React.useRef<{x:number,y:number}|null>(null)
   const accent = theme.ring || '#eb1a50'
@@ -852,20 +875,21 @@ function FloatBall({ themeName, bpm, conf, viz, onExit, isLockedHighlight }: { t
     window.addEventListener('pointerup', onUp)
   }
 
-  const confGray = themeName === 'dark' ? '#9aa3ab' : '#8a8f96'
+  const confGray = theme.confGray
   const color = isLockedHighlight ? theme.textPrimary : (conf == null ? confGray : (conf >= 0.5 ? theme.textPrimary : confGray))
-  const fontPx = 22
+  const bpmFontPx = 20
+  const keyFontPx = 16
   const rootStyle: React.CSSProperties = {height:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'transparent', cursor:'default'}
-  const bpmLabelColor = hover ? accent : (themeName === 'dark' ? '#c8d2df' : '#5c606d')
-  const textStyle: React.CSSProperties = {fontSize:fontPx,fontWeight:700,color,letterSpacing:1,lineHeight:fontPx + 'px'}
-  const bpmLabelStyle: React.CSSProperties = {fontSize:8,letterSpacing:2,color: bpmLabelColor,transition:'color 0.2s ease'}
+  const keyText = showWaiting ? '-' : ((keyMode === 'camelot' ? keyCamelot : keyNote) || '-')
+  const keyStable = !showWaiting && keyState === 'tracking' && keyConf != null && keyConf >= 0.55 && keyText !== '-'
+  const keyColor = keyStable ? theme.textPrimary : confGray
+  const textStyle: React.CSSProperties = {fontSize:bpmFontPx,fontWeight:700,color,letterSpacing:1,lineHeight:bpmFontPx + 'px'}
+  const keyStyle: React.CSSProperties = {fontSize:keyFontPx,fontWeight:700,color:keyColor,letterSpacing:1,lineHeight:keyFontPx + 'px'}
   return (
     <main style={rootStyle}>
       <div
         onPointerDown={handlePointerDown}
         onDoubleClick={async (e) => { e.preventDefault(); e.stopPropagation(); await onExit() }}
-        onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => setHover(false)}
         style={{
           width: canvasSize,
           height: canvasSize + 32,
@@ -903,7 +927,7 @@ function FloatBall({ themeName, bpm, conf, viz, onExit, isLockedHighlight }: { t
             }}
           >
             <div style={textStyle}>{Math.round(bpm || 0)}</div>
-            <div style={bpmLabelStyle}>BPM</div>
+            <div style={keyStyle}>{keyText}</div>
           </div>
         </div>
       </div>
