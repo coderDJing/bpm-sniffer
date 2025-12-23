@@ -12,6 +12,14 @@ pub struct DisplayBpm {
 }
 
 #[derive(Serialize, Clone)]
+pub struct DisplayKey {
+    pub key: String,
+    pub camelot: String,
+    pub confidence: f32,
+    pub state: &'static str,
+}
+
+#[derive(Serialize, Clone)]
 pub struct BackendLog {
     pub t_ms: u64,
     pub msg: String,

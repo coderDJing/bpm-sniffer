@@ -9,6 +9,7 @@ const MAJOR_KEYS: [&str; 12] = [
 const MINOR_KEYS: [&str; 12] = [
     "Cm", "C#m", "Dm", "D#m", "Em", "Fm", "F#m", "Gm", "G#m", "Am", "A#m", "Bm",
 ];
+pub const NA_KEY: &str = "N/A(无调性)";
 
 // Camelot Wheel（和声混音）编号：A=小调，B=大调
 const MAJOR_CAMELOT: [&str; 12] = [
@@ -30,6 +31,23 @@ pub fn camelot_from_key_name(key: &str) -> Option<&'static str> {
     None
 }
 
+fn camelot_number(key: &str) -> Option<u8> {
+    let c = camelot_from_key_name(key)?;
+    let mut num: u8 = 0;
+    for b in c.bytes() {
+        if b.is_ascii_digit() {
+            num = num.saturating_mul(10) + (b - b'0');
+        } else {
+            break;
+        }
+    }
+    if num == 0 { None } else { Some(num) }
+}
+
+fn same_camelot_number(a: &str, b: &str) -> bool {
+    camelot_number(a).zip(camelot_number(b)).map_or(false, |(x, y)| x == y)
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct KeyEstimate {
     pub key: &'static str,
@@ -40,6 +58,235 @@ pub struct KeyEstimate {
     pub confidence: f32,
     pub state: &'static str, // analyzing | atonal | uncertain | tracking
     pub effective_sec: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct KeyDecision {
+    pub key: &'static str,
+    pub state: &'static str, // tracking | uncertain | analyzing | atonal
+    pub raw: KeyEstimate,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct KeyTrackerConfig {
+    pub candidate_conf_min: f32,
+    pub init_conf_min: f32,
+    pub init_gap_min: f32,
+    pub init_wins: usize,
+    pub switch_conf_min: f32,
+    pub switch_gap_min: f32,
+    pub switch_wins: usize,
+    pub mode_switch_conf_min: f32,
+    pub mode_switch_gap_min: f32,
+    pub mode_switch_wins: usize,
+    pub hold_ms: u64,
+}
+
+impl Default for KeyTrackerConfig {
+    fn default() -> Self {
+        Self {
+            candidate_conf_min: 0.35,
+            init_conf_min: 0.45,
+            init_gap_min: 0.05,
+            init_wins: 3,
+            switch_conf_min: 0.50,
+            switch_gap_min: 0.06,
+            switch_wins: 3,
+            mode_switch_conf_min: 0.60,
+            mode_switch_gap_min: 0.10,
+            mode_switch_wins: 4,
+            hold_ms: 4000,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct StableKey {
+    key: &'static str,
+    last_confirm_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PendingKey {
+    key: &'static str,
+    wins: usize,
+}
+
+pub struct KeyTracker {
+    cfg: KeyTrackerConfig,
+    stable: Option<StableKey>,
+    pending: Option<PendingKey>,
+}
+
+impl KeyTracker {
+    pub fn new() -> Self {
+        Self::with_config(KeyTrackerConfig::default())
+    }
+
+    pub fn with_config(cfg: KeyTrackerConfig) -> Self {
+        Self {
+            cfg,
+            stable: None,
+            pending: None,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.stable = None;
+        self.pending = None;
+    }
+
+    pub fn update(&mut self, raw: KeyEstimate, now_ms: u64) -> KeyDecision {
+        if raw.key == NA_KEY || raw.state == "atonal" {
+            return self.hold_or_na(raw, now_ms, "atonal");
+        }
+        if raw.state == "analyzing" {
+            return self.hold_or_na(raw, now_ms, "analyzing");
+        }
+
+        let can_count = raw.confidence >= self.cfg.candidate_conf_min;
+        if can_count {
+            match self.pending {
+                Some(mut p) if p.key == raw.key => {
+                    p.wins += 1;
+                    self.pending = Some(p);
+                }
+                _ => {
+                    self.pending = Some(PendingKey {
+                        key: raw.key,
+                        wins: 1,
+                    });
+                }
+            }
+        } else {
+            self.pending = None;
+        }
+
+        if let Some(stable) = &mut self.stable {
+            if raw.key == stable.key {
+                stable.last_confirm_ms = now_ms;
+                self.pending = None;
+                let state = if raw.state == "tracking" {
+                    "tracking"
+                } else {
+                    "uncertain"
+                };
+                return KeyDecision {
+                    key: stable.key,
+                    state,
+                    raw,
+                };
+            }
+
+            let same_num = same_camelot_number(stable.key, raw.key);
+            let wins = self
+                .pending
+                .as_ref()
+                .filter(|p| p.key == raw.key)
+                .map(|p| p.wins)
+                .unwrap_or(0);
+            let (need_wins, conf_min, gap_min) = if same_num {
+                (
+                    self.cfg.mode_switch_wins,
+                    self.cfg.mode_switch_conf_min,
+                    self.cfg.mode_switch_gap_min,
+                )
+            } else {
+                (
+                    self.cfg.switch_wins,
+                    self.cfg.switch_conf_min,
+                    self.cfg.switch_gap_min,
+                )
+            };
+            let can_switch =
+                can_count && raw.confidence >= conf_min && raw.gap >= gap_min && wins >= need_wins;
+            if can_switch {
+                stable.key = raw.key;
+                stable.last_confirm_ms = now_ms;
+                self.pending = None;
+                let state = if raw.state == "tracking" {
+                    "tracking"
+                } else {
+                    "uncertain"
+                };
+                return KeyDecision {
+                    key: stable.key,
+                    state,
+                    raw,
+                };
+            }
+
+            let age = now_ms.saturating_sub(stable.last_confirm_ms);
+            if age <= self.cfg.hold_ms {
+                return KeyDecision {
+                    key: stable.key,
+                    state: "uncertain",
+                    raw,
+                };
+            }
+
+            self.stable = None;
+            return KeyDecision {
+                key: NA_KEY,
+                state: "atonal",
+                raw,
+            };
+        }
+
+        let wins = self
+            .pending
+            .as_ref()
+            .filter(|p| p.key == raw.key)
+            .map(|p| p.wins)
+            .unwrap_or(0);
+        let can_lock = can_count
+            && raw.confidence >= self.cfg.init_conf_min
+            && raw.gap >= self.cfg.init_gap_min
+            && wins >= self.cfg.init_wins;
+        if can_lock {
+            self.stable = Some(StableKey {
+                key: raw.key,
+                last_confirm_ms: now_ms,
+            });
+            let state = if raw.state == "tracking" {
+                "tracking"
+            } else {
+                "uncertain"
+            };
+            return KeyDecision {
+                key: raw.key,
+                state,
+                raw,
+            };
+        }
+
+        KeyDecision {
+            key: raw.key,
+            state: raw.state,
+            raw,
+        }
+    }
+
+    fn hold_or_na(&mut self, raw: KeyEstimate, now_ms: u64, fall_state: &'static str) -> KeyDecision {
+        if let Some(stable) = &mut self.stable {
+            let age = now_ms.saturating_sub(stable.last_confirm_ms);
+            if age <= self.cfg.hold_ms {
+                self.pending = None;
+                return KeyDecision {
+                    key: stable.key,
+                    state: "uncertain",
+                    raw,
+                };
+            }
+            self.stable = None;
+        }
+        self.pending = None;
+        KeyDecision {
+            key: NA_KEY,
+            state: fall_state,
+            raw,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -301,10 +548,9 @@ impl KeyEngine {
             });
         };
 
-        const NA: &str = "N/A(无调性)";
         Some(KeyEstimate {
-            key: NA,
-            top2: NA,
+            key: NA_KEY,
+            top2: NA_KEY,
             score: 0.0,
             score2: 0.0,
             gap: 0.0,

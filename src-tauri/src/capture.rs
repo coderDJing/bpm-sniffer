@@ -5,11 +5,12 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
 use crate::audio::AudioService;
-use crate::key::{camelot_from_key_name, KeyEngine};
+use crate::key::{camelot_from_key_name, KeyEngine, KeyTracker, NA_KEY};
 use crate::lang::is_log_zh;
 use crate::logging::{emit_friendly, now_ms, EMIT_KEY_LOGS, EMIT_TEXT_LOGS};
 use crate::state::{
-    AudioViz, BackendLog, DisplayBpm, COLLECTED_LOGS, CURRENT_BPM, OUT_LEN, RESET_REQUESTED,
+    AudioViz, BackendLog, DisplayBpm, DisplayKey, COLLECTED_LOGS, CURRENT_BPM, OUT_LEN,
+    RESET_REQUESTED,
 };
 use crate::tempo::{make_backend, TempoBackend};
 
@@ -46,6 +47,7 @@ pub fn run_capture(app: AppHandle) -> Result<()> {
 
     let mut backend: Box<dyn TempoBackend> = make_backend(svc.sample_rate());
     let mut key_engine = KeyEngine::new(svc.sample_rate());
+    let mut key_tracker = KeyTracker::new();
     let mut last_key_print: Option<&'static str> = None;
     let mut last_key_print_ms: u64 = 0;
 
@@ -130,6 +132,7 @@ pub fn run_capture(app: AppHandle) -> Result<()> {
                 recent_ints_cand.clear();
                 noise_floor_rms = 0.01;
                 key_engine.reset(sr_usize as u32);
+                key_tracker.reset();
                 last_key_print = None;
                 last_key_print_ms = 0;
                 let _ = app.emit_to(
@@ -163,6 +166,7 @@ pub fn run_capture(app: AppHandle) -> Result<()> {
                     hop_len = sr_usize / 2;
                     backend = make_backend(new_sr);
                     key_engine.reset(new_sr);
+                    key_tracker.reset();
                     last_key_print = None;
                     last_key_print_ms = 0;
                     // 更新侧链滤波系数
@@ -219,22 +223,49 @@ pub fn run_capture(app: AppHandle) -> Result<()> {
                         let db = 20.0 * (rms.max(1e-9)).log10();
                         let lvl = ((db + 60.0) / 60.0).clamp(0.0, 1.0);
                         if let Some(est) = key_engine.process(&buf, lvl, nowv) {
-                            let print_gap_ms = if est.state == "tracking" { 1500 } else { 4000 };
-                            let key = camelot_from_key_name(est.key).unwrap_or(est.key);
-                            let top2 = camelot_from_key_name(est.top2).unwrap_or(est.top2);
-                            let should_print = est.state != "analyzing"
-                                && (last_key_print.map_or(true, |k| k != key)
+                            let decision = key_tracker.update(est, nowv);
+                            let print_gap_ms =
+                                if decision.state == "tracking" { 1500 } else { 4000 };
+                            let display_key = decision.key;
+                            let key = camelot_from_key_name(display_key).unwrap_or(display_key);
+                            let raw_key =
+                                camelot_from_key_name(decision.raw.key).unwrap_or(decision.raw.key);
+                            let key_show = if display_key != decision.raw.key {
+                                format!("{}(raw={})", key, raw_key)
+                            } else {
+                                key.to_string()
+                            };
+                            let top2 =
+                                camelot_from_key_name(decision.raw.top2).unwrap_or(decision.raw.top2);
+                            let should_print = decision.state != "analyzing"
+                                && (last_key_print.map_or(true, |k| k != display_key)
                                     || nowv.saturating_sub(last_key_print_ms) >= print_gap_ms);
                             if should_print && EMIT_KEY_LOGS {
                                 let txt = if is_log_zh() {
-                                    format!("[调性] {} 置信度={:.2} 分数={:.2} gap={:.2} 次选={}({:.2}) 状态={} 有效={:.1}s 电平={:.2}", key, est.confidence, est.score, est.gap, top2, est.score2, est.state, est.effective_sec, lvl)
+                                    format!("[调性] {} 置信度={:.2} 分数={:.2} gap={:.2} 次选={}({:.2}) 状态={} 有效={:.1}s 电平={:.2}", key_show, decision.raw.confidence, decision.raw.score, decision.raw.gap, top2, decision.raw.score2, decision.state, decision.raw.effective_sec, lvl)
                                 } else {
-                                    format!("[KEY] {} conf={:.2} score={:.2} gap={:.2} top2={}({:.2}) state={} eff={:.1}s lvl={:.2}", key, est.confidence, est.score, est.gap, top2, est.score2, est.state, est.effective_sec, lvl)
+                                    format!("[KEY] {} conf={:.2} score={:.2} gap={:.2} top2={}({:.2}) state={} eff={:.1}s lvl={:.2}", key_show, decision.raw.confidence, decision.raw.score, decision.raw.gap, top2, decision.raw.score2, decision.state, decision.raw.effective_sec, lvl)
                                 };
                                 eprintln!("{}", txt);
-                                last_key_print = Some(key);
+                                last_key_print = Some(display_key);
                                 last_key_print_ms = nowv;
                             }
+                            let (key_out, camelot_out) = if display_key == NA_KEY {
+                                ("-".to_string(), "-".to_string())
+                            } else {
+                                let camelot = camelot_from_key_name(display_key).unwrap_or("-");
+                                (display_key.to_string(), camelot.to_string())
+                            };
+                            let _ = app.emit_to(
+                                "main",
+                                "key_update",
+                                DisplayKey {
+                                    key: key_out,
+                                    camelot: camelot_out,
+                                    confidence: decision.raw.confidence,
+                                    state: decision.state,
+                                },
+                            );
                         }
                         if nowv.saturating_sub(last_viz_ms) >= 16 {
                             if rms < 0.015 {
