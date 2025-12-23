@@ -33,3 +33,14 @@ img, a, svg, canvas {
 
 /* Firefox */
 .logs-scroll { scrollbar-color: #3a0b17 #12070b; scrollbar-width: thin; }
+
+.key-toggle-icon {
+  transform-origin: 50% 50%;
+}
+.key-toggle-anim {
+  animation: key-toggle-pop 220ms ease;
+}
+@keyframes key-toggle-pop {
+  0% { transform: scale(0.85) rotate(-8deg); opacity: 0.6; }
+  100% { transform: scale(1) rotate(0deg); opacity: 1; }
+}

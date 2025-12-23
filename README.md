@@ -90,6 +90,9 @@ pnpm build
   - Push `vX.Y.Z` to trigger a stable release (with OTA updates).
   - Push `vX.Y.Z-suffix` (must contain `-`, e.g. `-rc1`) to trigger a pre-release build (manual install only).
 
+Sample audio (key regression): `python "scripts/generate_tonal_house_sample.py"` (default 300s; outputs 24 keys into `tmp/keys_124bpm` and file name includes Camelot like `house_3B_Csharp_major_124bpm.wav`).
+Single key: `python "scripts/generate_tonal_house_sample.py" --single --key "F#" --mode major`.
+
 Algorithms & Implementation: see [Algorithm principles & flow](doc/算法原理与流程.md).
 
 License: MIT (see `LICENSE`).

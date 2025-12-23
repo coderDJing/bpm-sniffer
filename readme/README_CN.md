@@ -90,6 +90,9 @@ pnpm build
   - 推送 `vX.Y.Z` 触发正式版（支持 OTA）。
   - 推送包含 `-` 的 `vX.Y.Z-后缀` 触发预发布（需手动安装）。
 
+调性回归样本：`python "scripts/generate_tonal_house_sample.py"`（默认 300 秒，输出 24 个调性到 `tmp/keys_124bpm`，文件名包含 Camelot，例如 `house_3B_Csharp_major_124bpm.wav`）。
+单一调性：`python "scripts/generate_tonal_house_sample.py" --single --key "F#" --mode major`。
+
 算法与实现：详见 [算法原理与流程](../doc/算法原理与流程.md)。
 
 许可证：MIT（见 `LICENSE`）。

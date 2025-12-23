@@ -1,6 +1,6 @@
 use serde::Serialize;
-use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::AtomicBool;
+use std::sync::{Mutex, OnceLock};
 
 // 共享给各模块的展示结构体
 #[derive(Serialize, Clone, Copy)]
@@ -9,6 +9,14 @@ pub struct DisplayBpm {
     pub confidence: f32,
     pub state: &'static str,
     pub level: f32,
+}
+
+#[derive(Serialize, Clone)]
+pub struct DisplayKey {
+    pub key: String,
+    pub camelot: String,
+    pub confidence: f32,
+    pub state: &'static str,
 }
 
 #[derive(Serialize, Clone)]
@@ -33,5 +41,3 @@ pub static CAPTURE_RUNNING: OnceLock<AtomicBool> = OnceLock::new();
 
 // 可视化输出的下采样波形长度（与前端保持一致）
 pub const OUT_LEN: usize = 192;
-
-

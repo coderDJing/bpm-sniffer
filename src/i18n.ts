@@ -25,10 +25,14 @@ export function getCurrentLang(): SupportedLang {
 type Dict = Record<string, { 'zh-CN': string, en: string }>
 
 const dict: Dict = {
-  app_title: { 'zh-CN': 'BPM', en: 'BPM' },
+  app_title: { 'zh-CN': 'BPM/KEY', en: 'BPM/KEY' },
   state_tracking: { 'zh-CN': '节拍稳定', en: 'Stable' },
   state_analyzing: { 'zh-CN': '分析中', en: 'Analyzing' },
   state_uncertain: { 'zh-CN': '节拍不稳', en: 'Unstable' },
+  key_state_tracking: { 'zh-CN': '调性稳定', en: 'Key stable' },
+  key_state_analyzing: { 'zh-CN': '调性分析中', en: 'Key analyzing' },
+  key_state_uncertain: { 'zh-CN': '调性不稳', en: 'Key unstable' },
+  key_state_atonal: { 'zh-CN': '无调性', en: 'No key' },
   state_waiting_audio: { 'zh-CN': '等待声音', en: 'Waiting audio' },
   conf_label: { 'zh-CN': '置信度：', en: 'Conf: ' },
   conf_stable: { 'zh-CN': '稳定', en: 'High' },

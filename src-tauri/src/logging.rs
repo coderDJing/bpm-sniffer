@@ -2,13 +2,16 @@ use std::fs::{self, OpenOptions};
 use std::io::Write as IoWrite;
 use std::sync::OnceLock;
 
-use tauri::{AppHandle, Manager, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::lang::is_log_zh;
 
 pub static LOG_FILE_PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
 
-pub const EMIT_TEXT_LOGS: bool = true;
+// 控制台日志级别：0=静默，1=仅调性（Key）实验日志，2=全部文本日志
+pub const CONSOLE_LOG_LEVEL: u8 = 1;
+pub const EMIT_KEY_LOGS: bool = CONSOLE_LOG_LEVEL >= 1;
+pub const EMIT_TEXT_LOGS: bool = CONSOLE_LOG_LEVEL >= 2;
 
 pub fn append_log_line(line: &str) {
     if let Some(p) = LOG_FILE_PATH.get() {
@@ -76,5 +79,3 @@ pub fn now_ms() -> u64 {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
 }
-
-

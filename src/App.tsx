@@ -11,6 +11,8 @@ import refresh from './assets/refresh.png'
 import fullScreenBlack from './assets/fullScreenBlack.png'
 import fullScreenWhite from './assets/fullScreenWhite.png'
 import floatingWindow from './assets/floatingWindow.png'
+import keyCamelotIcon from './assets/A.png'
+import keyNoteIcon from './assets/C.png'
 // @ts-ignore: optional plugin at runtime
 import { check } from '@tauri-apps/plugin-updater'
 import { getVersion } from '@tauri-apps/api/app'
@@ -18,6 +20,7 @@ import { t, getCurrentLang, tn } from './i18n'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 
 type DisplayBpm = { bpm: number, confidence: number, state: 'tracking'|'uncertain'|'analyzing', level: number }
+type DisplayKey = { key: string, camelot: string, confidence: number, state: 'tracking'|'uncertain'|'analyzing'|'atonal' }
 type AudioViz = { samples: number[], rms: number }
 
 export default function App() {
@@ -25,6 +28,12 @@ export default function App() {
   const [bpm, setBpm] = useState<number | null>(null)
   const [conf, setConf] = useState<number | null>(null)
   const [state, setState] = useState<DisplayBpm['state']>('analyzing')
+  const [keyNote, setKeyNote] = useState<string | null>(null)
+  const [keyCamelot, setKeyCamelot] = useState<string | null>(null)
+  const [keyConf, setKeyConf] = useState<number | null>(null)
+  const [keyState, setKeyState] = useState<DisplayKey['state']>('analyzing')
+  const [keyMode, setKeyMode] = useState<'note' | 'camelot'>('note')
+  const [keyIconTick, setKeyIconTick] = useState(0)
   const [alwaysOnTop, setAlwaysOnTop] = useState<boolean>(false)
   const [viz, setViz] = useState<AudioViz | null>(null)
   const [vizMode, setVizMode] = useState<'wave'|'bars'|'waterfall'>('wave')
@@ -35,12 +44,16 @@ export default function App() {
   const [manualBpm, setManualBpm] = useState<number | null>(null)
   const manualModeRef = useRef<boolean>(false)
   const mqlCleanupRef = useRef<null | (() => void)>(null)
+  const keyHoldRef = useRef<{ note: string | null, camelot: string | null }>({ note: null, camelot: null })
+  const keyConfEmaRef = useRef<number | null>(null)
+  const keyConfKeyRef = useRef<string | null>(null)
   // 高亮锁：当某个值在高置信度下被高亮后，如果之后收到同值但低置信度的数据，仍保持高亮，直到值发生变化
   const bpmRef = useRef<number | null>(null)
   const highlightLockRef = useRef<{ locked: boolean, bpm: number | null }>({ locked: false, bpm: null })
   // 低置信度同值连续计数：当灰显同值连续达到阈值（如5）时，自动视为需要高亮
   const lowConfStreakRef = useRef<{ bpm: number | null, count: number }>({ bpm: null, count: 0 })
   const lowConfPromoteThreshold = 5
+  const keyConfAlpha = 0.5
   const manualTapTimesRef = useRef<number[]>([])
 
   useEffect(() => {
@@ -144,6 +157,11 @@ export default function App() {
       setBpm(null); bpmRef.current = null
       setConf(null)
       setState('analyzing')
+      setKeyNote(null)
+      setKeyCamelot(null)
+      setKeyConf(null)
+      setKeyState('analyzing')
+      keyHoldRef.current = { note: null, camelot: null }
       setViz(null)
       highlightLockRef.current = { locked: false, bpm: null }
       lowConfStreakRef.current = { bpm: null, count: 0 }
@@ -189,6 +207,10 @@ export default function App() {
           const savedViz = localStorage.getItem('bpm_viz_mode')
           if (savedViz === 'wave' || savedViz === 'bars' || savedViz === 'waterfall') {
             setVizMode(savedViz as 'wave'|'bars'|'waterfall')
+          }
+          const savedKeyMode = localStorage.getItem('key_mode')
+          if (savedKeyMode === 'note' || savedKeyMode === 'camelot') {
+            setKeyMode(savedKeyMode as 'note'|'camelot')
           }
         } catch {}
 
@@ -238,6 +260,44 @@ export default function App() {
             bpmRef.current = res.bpm
           }
         })
+        const unlistenK = await listen<DisplayKey>('key_update', (e) => {
+          const res = e.payload
+          const incomingNote = res.key
+          const incomingCamelot = res.camelot
+          const valid = incomingNote !== '-' && incomingCamelot !== '-'
+          const keyId = valid ? `${incomingNote}|${incomingCamelot}` : '-'
+          let nextKeyConf = res.confidence
+          const shouldReset = !valid || res.state === 'analyzing' || res.state === 'atonal' || keyConfKeyRef.current !== keyId
+          if (shouldReset) {
+            keyConfEmaRef.current = nextKeyConf
+            keyConfKeyRef.current = keyId
+          } else {
+            const prev = keyConfEmaRef.current ?? nextKeyConf
+            nextKeyConf = prev * (1 - keyConfAlpha) + nextKeyConf * keyConfAlpha
+            keyConfEmaRef.current = nextKeyConf
+          }
+          setKeyConf(nextKeyConf)
+          setKeyState(res.state)
+          if (res.state === 'tracking' && valid && res.confidence >= 0.55) {
+            keyHoldRef.current = { note: incomingNote, camelot: incomingCamelot }
+            setKeyNote(incomingNote)
+            setKeyCamelot(incomingCamelot)
+            return
+          }
+          if (res.state === 'uncertain') {
+            if (keyHoldRef.current.note && keyHoldRef.current.camelot) {
+              setKeyNote(keyHoldRef.current.note)
+              setKeyCamelot(keyHoldRef.current.camelot)
+            } else {
+              setKeyNote('-')
+              setKeyCamelot('-')
+            }
+            return
+          }
+          keyHoldRef.current = { note: null, camelot: null }
+          setKeyNote('-')
+          setKeyCamelot('-')
+        })
         const unlistenD = await listen<AudioViz>('viz_update', async (e) => {
           const payload = e.payload as any as AudioViz
           setViz(payload)
@@ -261,7 +321,7 @@ export default function App() {
             }
           }
         })
-        removeListener = () => { if (removeMql) removeMql(); unlistenA(); unlistenD() }
+        removeListener = () => { if (removeMql) removeMql(); unlistenA(); unlistenK(); unlistenD() }
 
         // 仅靠后端初始化语言；前端不再覆盖后端语言
         await invoke('start_capture')
@@ -289,6 +349,9 @@ export default function App() {
       if (e.key === 'bpm_theme') {
         const v = e.newValue
         if (v === 'dark' || v === 'light') setThemeName(v)
+      } else if (e.key === 'key_mode') {
+        const v = e.newValue
+        if (v === 'note' || v === 'camelot') setKeyMode(v)
       }
     }
     window.addEventListener('storage', onStorage)
@@ -332,19 +395,42 @@ export default function App() {
   const baseLabel = state === 'tracking' ? t('state_tracking') : state === 'analyzing' ? t('state_analyzing') : t('state_uncertain')
   const baseConfLabel = conf == null ? '—' : conf >= 0.75 ? t('conf_stable') : conf >= 0.5 ? t('conf_medium') : t('conf_unstable')
   const baseConfColor = conf == null ? theme.confGray : (conf >= 0.5 ? theme.textPrimary : theme.confGray)
+  const keyLabel = showWaiting
+    ? t('state_waiting_audio')
+    : keyState === 'tracking'
+      ? t('key_state_tracking')
+      : keyState === 'analyzing'
+        ? t('key_state_analyzing')
+        : keyState === 'uncertain'
+          ? t('key_state_uncertain')
+          : t('key_state_atonal')
+  const keyConfLabel = showWaiting ? '—' : (keyConf == null ? '—' : keyConf >= 0.75 ? t('conf_stable') : keyConf >= 0.5 ? t('conf_medium') : t('conf_unstable'))
+  const keyConfColor = showWaiting ? theme.confGray : (keyConf == null ? theme.confGray : (keyConf >= 0.5 ? theme.textPrimary : theme.confGray))
   // 当高亮锁生效且锁定的值与当前显示值一致时，始终使用高亮颜色
   const autoDisplayedBpm = (bpm == null ? bpmRef.current : bpm)
   const currentDisplayedBpm = manualMode ? manualBpm : autoDisplayedBpm
   const currentDisplayedIntForColor = currentDisplayedBpm != null ? Math.round(currentDisplayedBpm) : null
   const isLockedHighlight = !manualMode && !!(highlightLockRef.current.locked && highlightLockRef.current.bpm != null && highlightLockRef.current.bpm === currentDisplayedIntForColor)
-  const confLabel = isLockedHighlight ? t('conf_stable') : baseConfLabel
-  const confColor = isLockedHighlight ? theme.textPrimary : baseConfColor
+  const confLabel = showWaiting ? '—' : (isLockedHighlight ? t('conf_stable') : baseConfLabel)
+  const confColor = showWaiting ? theme.confGray : (isLockedHighlight ? theme.textPrimary : baseConfColor)
   const bpmColor = manualMode
     ? theme.accent
     : (isLockedHighlight ? theme.textPrimary : (conf == null ? theme.confGray : (conf >= 0.5 ? theme.textPrimary : theme.confGray)))
   // 状态标签：当静音去抖成立时显示“等待声音”；其余规则保持不变
   const label = showWaiting ? t('state_waiting_audio') : (state === 'analyzing' ? t('state_analyzing') : (isLockedHighlight ? t('state_tracking') : baseLabel))
   const displayBpm = currentDisplayedBpm != null ? Math.round(currentDisplayedBpm) : 0
+  const displayKey = (keyMode === 'camelot' ? keyCamelot : keyNote) || '-'
+  const keyStable = keyState === 'tracking' && keyConf != null && keyConf >= 0.55 && displayKey !== '-'
+  const keyColor = keyStable ? theme.textPrimary : theme.confGray
+  const bpmBright = !manualMode && (isLockedHighlight || (conf != null && conf >= 0.5))
+  const slashColor = (bpmBright && keyStable) ? theme.textPrimary : theme.confGray
+  const keyModeIcon = keyMode === 'camelot' ? keyCamelotIcon : keyNoteIcon
+  const viewH = typeof window !== 'undefined' ? window.innerHeight : 0
+  const layoutDensity = viewH < 320 ? 'tight' : viewH < 380 ? 'compact' : 'normal'
+  const mainGap = layoutDensity === 'normal' ? 16 : layoutDensity === 'compact' ? 12 : 8
+  const metaPaddingTop = layoutDensity === 'normal' ? 10 : layoutDensity === 'compact' ? 8 : 6
+  const metaGap = layoutDensity === 'normal' ? 4 : 3
+  const vizMarginBottom = layoutDensity === 'normal' ? 7 : layoutDensity === 'compact' ? 5 : 3
 
   // 已固定后端为基础模式，无切换
 
@@ -373,10 +459,10 @@ export default function App() {
       const h = window.innerHeight
       const w = window.innerWidth
       // 粗略阈值：根据当前组件布局估算
-      setHideRms(h < 350)
-      setHideViz(h < 320)
-      setHideTitle(h < 180)
-      setHideMeta(h < 160)
+      setHideRms(h < 360)
+      setHideViz(h < 330)
+      setHideTitle(h < 200)
+      setHideMeta(h < 180)
       setHideActions(w < 380)
       // 强制一次轻量刷新，确保宽度自适应在静态画面时也更新
       setSizeTick((t) => (t + 1) % 1000000)
@@ -390,6 +476,9 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem('bpm_viz_mode', vizMode) } catch {}
   }, [vizMode])
+  useEffect(() => {
+    try { localStorage.setItem('key_mode', keyMode) } catch {}
+  }, [keyMode])
 
   // 独立关于窗口
   if (route === '#about') {
@@ -405,12 +494,25 @@ export default function App() {
 
   if (route === '#float') {
     return (
-      <FloatBall themeName={themeName} bpm={bpmRef.current ?? 0} conf={conf} viz={viz} onExit={async () => { try { await invoke('exit_floating') } catch {} }} isLockedHighlight={isLockedHighlight} />
+      <FloatBall
+        themeName={themeName}
+        bpm={bpmRef.current ?? 0}
+        conf={conf}
+        viz={viz}
+        keyMode={keyMode}
+        keyNote={keyNote}
+        keyCamelot={keyCamelot}
+        keyConf={keyConf}
+        keyState={keyState}
+        showWaiting={showWaiting}
+        onExit={async () => { try { await invoke('exit_floating') } catch {} }}
+        isLockedHighlight={isLockedHighlight}
+      />
     )
   }
 
   return (
-    <main style={{height:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent: hideViz ? 'center' : 'flex-start',gap:16,background:theme.background,color:theme.textPrimary,overflow:'hidden'}}>
+    <main style={{height:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent: hideViz ? 'center' : 'flex-start',gap:mainGap,background:theme.background,color:theme.textPrimary,overflow:'hidden'}}>
       {updateReady && (
         <div style={{position:'fixed',left:'50%',transform:'translateX(-50%)',bottom:16,background:theme.panelBg,border:'1px solid #1d2a3a',borderRadius:8,padding:'10px 12px',display:'flex',alignItems:'center',gap:10,zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.35)',minWidth:'min(360px, calc(100vw - 32px))',maxWidth:'calc(100vw - 32px)',flexWrap:'nowrap',justifyContent:'flex-start'}}>
           <span style={{fontSize:12,color:theme.textPrimary,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',flex:'1 1 auto',minWidth:0}}>{t('update_ready')}</span>
@@ -422,16 +524,28 @@ export default function App() {
         <div
           onPointerDown={handleManualPointerDown}
           title={!manualMode ? t('manual_enter_hint') : undefined}
-          style={{fontSize:96,fontWeight:700,letterSpacing:2,color:bpmColor,height:'100px',lineHeight:'100px',position:'relative',cursor:'pointer',userSelect:'none',display:'flex',alignItems:'center',justifyContent:'center'}}
+          style={{fontSize:72,fontWeight:700,letterSpacing:2,color:bpmColor,height:'76px',lineHeight:'76px',position:'relative',cursor:'pointer',userSelect:'none',display:'flex',alignItems:'center',justifyContent:'center'}}
         >
-          {displayBpm}
+          <span style={{color: bpmColor}}>{displayBpm}</span>
+          <span style={{color: slashColor}}>/</span>
+          <span style={{color: keyColor}}>{displayKey}</span>
         </div>
         {!hideMeta && (
           manualMode ? (
-            <div style={{fontSize:14,color:theme.textSecondary,paddingTop:'10px'}}>{t('manual_exit_hint')}</div>
+            <div style={{fontSize:14,color:theme.textSecondary,paddingTop:metaPaddingTop,display:'flex',flexDirection:'column',alignItems:'center',gap:metaGap}}>
+              <div>{t('manual_exit_hint')}</div>
+              <div>
+                {keyLabel} · {t('conf_label')}<span style={{color: keyConfColor}}>{keyConfLabel}</span>
+              </div>
+            </div>
           ) : (
-            <div style={{fontSize:14,color:theme.textSecondary,paddingTop:'10px'}}>
-              {label} · {t('conf_label')}<span style={{color: confColor}}>{confLabel}</span>
+            <div style={{fontSize:14,color:theme.textSecondary,paddingTop:metaPaddingTop,display:'flex',flexDirection:'column',alignItems:'center',gap:metaGap}}>
+              <div>
+                {label} · {t('conf_label')}<span style={{color: confColor}}>{confLabel}</span>
+              </div>
+              <div>
+                {keyLabel} · {t('conf_label')}<span style={{color: keyConfColor}}>{keyConfLabel}</span>
+              </div>
             </div>
           )
         )}
@@ -439,7 +553,7 @@ export default function App() {
 
       {/* 简易波形可视化 */}
       {!hideViz && (
-        <div style={{marginTop:'auto', marginBottom:7}}>
+        <div style={{marginTop:'auto', marginBottom:vizMarginBottom}}>
           <VizPanel theme={theme} hideRms={hideRms} viz={viz} mode={vizMode} onToggle={() => setVizMode(m => m==='wave' ? 'bars' : (m==='bars' ? 'waterfall' : 'wave'))} themeName={themeName} />
         </div>
       )}
@@ -524,6 +638,34 @@ export default function App() {
           </div>
         </button>
         <button
+          onClick={() => {
+            setKeyMode(m => m === 'note' ? 'camelot' : 'note')
+            setKeyIconTick((t) => t + 1)
+          }}
+          title={keyMode === 'camelot' ? 'Alphanumeric' : 'Classic'}
+          style={{
+            background:'transparent',
+            border:'none',
+            padding:0,
+            cursor:'pointer',
+            width:25,
+            height:25,
+            display:'flex',
+            alignItems:'center',
+            justifyContent:'center'
+          }}
+        >
+          <img
+            key={`${keyMode}-${keyIconTick}`}
+            className="key-toggle-icon key-toggle-anim"
+            src={keyModeIcon}
+            alt={tn('切换调性显示', 'Toggle key display')}
+            width={25}
+            height={25}
+            draggable={false}
+          />
+        </button>
+        <button
           onClick={toggleAlwaysOnTop}
           title={alwaysOnTop ? t('pin_title_on') : t('pin_title_off')}
           style={{
@@ -585,19 +727,20 @@ export default function App() {
   )
 }
 
-function FloatBall({ themeName, bpm, conf, viz, onExit, isLockedHighlight }: { themeName: 'dark'|'light', bpm: number, conf: number | null, viz: AudioViz | null, onExit: () => Promise<void>, isLockedHighlight: boolean }) {
+function FloatBall({ themeName, bpm, conf, viz, keyMode, keyNote, keyCamelot, keyConf, keyState, showWaiting, onExit, isLockedHighlight }: { themeName: 'dark'|'light', bpm: number, conf: number | null, viz: AudioViz | null, keyMode: 'note'|'camelot', keyNote: string | null, keyCamelot: string | null, keyConf: number | null, keyState: DisplayKey['state'], showWaiting: boolean, onExit: () => Promise<void>, isLockedHighlight: boolean }) {
   const darkTheme = {
     background: 'rgba(20,6,10,0.82)',
     textPrimary: '#ffffff',
-    ring: '#eb1a50'
+    ring: '#eb1a50',
+    confGray: '#9aa3ab'
   }
   const lightTheme = {
     background: 'rgba(255,244,247,0.82)',
     textPrimary: '#1b0a10',
-    ring: '#eb1a50'
+    ring: '#eb1a50',
+    confGray: '#8a8f96'
   }
   const theme = themeName === 'dark' ? darkTheme : lightTheme
-  const [hover, setHover] = React.useState(false)
   const lastClickRef = React.useRef<number>(0)
   const dragStartRef = React.useRef<{x:number,y:number}|null>(null)
   const accent = theme.ring || '#eb1a50'
@@ -746,20 +889,21 @@ function FloatBall({ themeName, bpm, conf, viz, onExit, isLockedHighlight }: { t
     window.addEventListener('pointerup', onUp)
   }
 
-  const confGray = themeName === 'dark' ? '#9aa3ab' : '#8a8f96'
+  const confGray = theme.confGray
   const color = isLockedHighlight ? theme.textPrimary : (conf == null ? confGray : (conf >= 0.5 ? theme.textPrimary : confGray))
-  const fontPx = 22
+  const bpmFontPx = 20
+  const keyFontPx = 16
   const rootStyle: React.CSSProperties = {height:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'transparent', cursor:'default'}
-  const bpmLabelColor = hover ? accent : (themeName === 'dark' ? '#c8d2df' : '#5c606d')
-  const textStyle: React.CSSProperties = {fontSize:fontPx,fontWeight:700,color,letterSpacing:1,lineHeight:fontPx + 'px'}
-  const bpmLabelStyle: React.CSSProperties = {fontSize:8,letterSpacing:2,color: bpmLabelColor,transition:'color 0.2s ease'}
+  const keyText = showWaiting ? '-' : ((keyMode === 'camelot' ? keyCamelot : keyNote) || '-')
+  const keyStable = !showWaiting && keyState === 'tracking' && keyConf != null && keyConf >= 0.55 && keyText !== '-'
+  const keyColor = keyStable ? theme.textPrimary : confGray
+  const textStyle: React.CSSProperties = {fontSize:bpmFontPx,fontWeight:700,color,letterSpacing:1,lineHeight:bpmFontPx + 'px'}
+  const keyStyle: React.CSSProperties = {fontSize:keyFontPx,fontWeight:700,color:keyColor,letterSpacing:1,lineHeight:keyFontPx + 'px'}
   return (
     <main style={rootStyle}>
       <div
         onPointerDown={handlePointerDown}
         onDoubleClick={async (e) => { e.preventDefault(); e.stopPropagation(); await onExit() }}
-        onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => setHover(false)}
         style={{
           width: canvasSize,
           height: canvasSize + 32,
@@ -797,7 +941,7 @@ function FloatBall({ themeName, bpm, conf, viz, onExit, isLockedHighlight }: { t
             }}
           >
             <div style={textStyle}>{Math.round(bpm || 0)}</div>
-            <div style={bpmLabelStyle}>BPM</div>
+            <div style={keyStyle}>{keyText}</div>
           </div>
         </div>
       </div>

@@ -1,4 +1,6 @@
 .cursor/
+# 本地临时文件（例如生成的 WAV 样本）
+tmp/
 # 忽略本地环境变量文件（私有更新端点等）
 .env
 .env.local
@@ -176,5 +178,3 @@ Thumbs.db
 # pnpm-lock.yaml
 # yarn.lock
 # package-lock.json
-
-AGENTS.md

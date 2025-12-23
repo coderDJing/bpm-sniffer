@@ -1,12 +1,15 @@
 use anyhow::Result;
-use tauri::{AppHandle, Emitter, Manager};
-use tauri::{LogicalSize, Size, Position, PhysicalPosition};
 use tauri::Url;
+use tauri::{AppHandle, Emitter, Manager};
+use tauri::{LogicalSize, PhysicalPosition, Position, Size};
 
 use crate::capture::run_capture;
 use crate::lang::{is_log_zh, set_log_lang_zh};
-use crate::logging::{append_log_line, emit_friendly, now_ms};
-use crate::state::{AudioViz, BackendLog, DisplayBpm, CAPTURE_RUNNING, COLLECTED_LOGS, CURRENT_BPM, OUT_LEN, RESET_REQUESTED};
+use crate::logging::{append_log_line, emit_friendly, now_ms, EMIT_TEXT_LOGS};
+use crate::state::{
+    AudioViz, BackendLog, DisplayBpm, CAPTURE_RUNNING, COLLECTED_LOGS, CURRENT_BPM, OUT_LEN,
+    RESET_REQUESTED,
+};
 
 #[tauri::command]
 pub fn start_capture(app: AppHandle) -> Result<(), String> {
@@ -15,8 +18,12 @@ pub fn start_capture(app: AppHandle) -> Result<(), String> {
     let _ = RESET_REQUESTED.set(std::sync::atomic::AtomicBool::new(false));
     let flag = CAPTURE_RUNNING.get_or_init(|| std::sync::atomic::AtomicBool::new(false));
     let was_running = flag.swap(true, std::sync::atomic::Ordering::SeqCst);
-    if was_running { return Ok(()); }
-    std::thread::spawn(move || { let _ = run_capture(app); });
+    if was_running {
+        return Ok(());
+    }
+    std::thread::spawn(move || {
+        let _ = run_capture(app);
+    });
     Ok(())
 }
 
@@ -27,11 +34,15 @@ pub fn set_log_lang(is_zh: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn get_log_lang() -> bool { is_log_zh() }
+pub fn get_log_lang() -> bool {
+    is_log_zh()
+}
 
 #[tauri::command]
 pub fn get_current_bpm() -> Option<DisplayBpm> {
-    CURRENT_BPM.get().and_then(|m| m.lock().ok().and_then(|g| *g))
+    CURRENT_BPM
+        .get()
+        .and_then(|m| m.lock().ok().and_then(|g| *g))
 }
 
 #[tauri::command]
@@ -39,7 +50,9 @@ pub fn set_always_on_top(app: AppHandle, on_top: bool) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("main") {
         win.set_always_on_top(on_top).map_err(|e| e.to_string())?;
         Ok(())
-    } else { Err("window not found".into()) }
+    } else {
+        Err("window not found".into())
+    }
 }
 
 #[tauri::command]
@@ -61,7 +74,10 @@ pub fn enter_floating(app: AppHandle) -> Result<(), String> {
             let h_log = (sz.height as f64) / sf;
             let _ = w.set_size(Size::Logical(LogicalSize::new(h_log, h_log)));
         }
-        let _ = w.navigate(Url::parse("tauri://localhost/index.html#float").unwrap_or_else(|_| Url::parse("tauri://localhost/#float").unwrap()));
+        let _ = w.navigate(
+            Url::parse("tauri://localhost/index.html#float")
+                .unwrap_or_else(|_| Url::parse("tauri://localhost/#float").unwrap()),
+        );
         let _ = w.show();
         let _ = w.set_focus();
     }
@@ -74,7 +90,9 @@ pub fn enter_floating(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn exit_floating(app: AppHandle) -> Result<(), String> {
-    if let Some(f) = app.get_webview_window("float") { let _ = f.hide(); }
+    if let Some(f) = app.get_webview_window("float") {
+        let _ = f.hide();
+    }
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.set_decorations(true);
         let _ = main.set_resizable(true);
@@ -103,7 +121,9 @@ pub fn exit_floating(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn save_float_pos(_x: i32, _y: i32) -> Result<(), String> { Ok(()) }
+pub fn save_float_pos(_x: i32, _y: i32) -> Result<(), String> {
+    Ok(())
+}
 
 #[tauri::command]
 pub fn get_updater_endpoints(app: AppHandle) -> Vec<String> {
@@ -111,8 +131,15 @@ pub fn get_updater_endpoints(app: AppHandle) -> Vec<String> {
     let conf = app.config();
     let plugins = &conf.plugins;
     if let Some(updater_cfg) = plugins.0.get("updater") {
-        if let Some(arr) = updater_cfg.get("endpoints").and_then(|v: &serde_json::Value| v.as_array()) {
-            for v in arr { if let Some(s) = v.as_str() { out.push(s.to_string()); } }
+        if let Some(arr) = updater_cfg
+            .get("endpoints")
+            .and_then(|v: &serde_json::Value| v.as_array())
+        {
+            for v in arr {
+                if let Some(s) = v.as_str() {
+                    out.push(s.to_string());
+                }
+            }
         }
     }
     out
@@ -128,17 +155,43 @@ pub fn get_log_dir(app: AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 pub fn reset_backend(app: AppHandle) -> Result<(), String> {
-    if let Some(flag) = RESET_REQUESTED.get() { flag.store(true, std::sync::atomic::Ordering::SeqCst); }
-    let boot_txt = if is_log_zh() { "[用户] 触发后端重置" } else { "[USER] reset_backend invoked" };
+    if let Some(flag) = RESET_REQUESTED.get() {
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    let boot_txt = if is_log_zh() {
+        "[用户] 触发后端重置"
+    } else {
+        "[USER] reset_backend invoked"
+    };
     append_log_line(boot_txt);
-    eprintln!("{}", boot_txt);
-    let log = BackendLog { t_ms: now_ms(), msg: boot_txt.to_string() };
+    if EMIT_TEXT_LOGS {
+        eprintln!("{}", boot_txt);
+    }
+    let log = BackendLog {
+        t_ms: now_ms(),
+        msg: boot_txt.to_string(),
+    };
     let _ = app.emit_to("main", "bpm_log", log.clone());
-    if let Some(cell) = COLLECTED_LOGS.get() { if let Ok(mut g) = cell.lock() { g.push(log); } }
-    let _ = app.emit("viz_update", AudioViz { samples: vec![0.0; OUT_LEN], rms: 0.0 });
+    if let Some(cell) = COLLECTED_LOGS.get() {
+        if let Ok(mut g) = cell.lock() {
+            g.push(log);
+        }
+    }
+    let _ = app.emit(
+        "viz_update",
+        AudioViz {
+            samples: vec![0.0; OUT_LEN],
+            rms: 0.0,
+        },
+    );
     if let Some(cell) = CURRENT_BPM.get() {
         if let Ok(mut guard) = cell.lock() {
-            let payload = DisplayBpm { bpm: 0.0, confidence: 0.0, state: "analyzing", level: 0.0 };
+            let payload = DisplayBpm {
+                bpm: 0.0,
+                confidence: 0.0,
+                state: "analyzing",
+                level: 0.0,
+            };
             *guard = Some(payload);
             let _ = app.emit("bpm_update", payload);
         }
@@ -148,6 +201,6 @@ pub fn reset_backend(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn stop_capture() -> Result<(), String> { Ok(()) }
-
-
+pub fn stop_capture() -> Result<(), String> {
+    Ok(())
+}

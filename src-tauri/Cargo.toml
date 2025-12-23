@@ -21,6 +21,8 @@ serde_json = "1"
 crossbeam-channel = "0.5"
 thiserror = "1"
 anyhow = "1"
+# 频域分析（调性/Chroma 实验）
+rustfft = "6"
 # 环境变量加载（本地覆盖更新端点）
 dotenvy = "0.15"
 winreg = { version = "0.52", optional = true }
