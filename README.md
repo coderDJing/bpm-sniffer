@@ -12,8 +12,8 @@
   <a href="/readme/README_CN.md">简体中文</a>
  </p>
 
-Lightweight local real-time BPM (beats per minute) detector.
-Play music in any player or web page, and it will automatically display the current song's BPM in real time.
+Lightweight local real-time BPM (beats per minute) and key detector.
+Play music in any player or web page, and it will automatically display the current song's BPM and musical key in real time.
 No virtual sound card required — works out of the box.
 
 Supports bilingual UI (Simplified Chinese / English). The language follows your system locale.
@@ -28,6 +28,7 @@ Supports bilingual UI (Simplified Chinese / English). The language follows your 
 ### What is this
 
 - Automatically detects and displays the BPM from audio currently playing on your system.
+- Real-time key (tonality) analysis with stability state and note/Camelot display.
 - Compact floating window with always-on-top, light/dark themes, and simple visualizations.
 - Entirely local processing. No audio is collected or uploaded.
 
@@ -35,6 +36,7 @@ Supports bilingual UI (Simplified Chinese / English). The language follows your 
 
 - **Ready to use**: No extra drivers or virtual sound card needed.
 - **Stable readings**: Stabilization and anti-jitter for track changes and weak beats.
+- **Real-time key analysis**: Shows musical key with confidence and lets you toggle Note / Camelot display.
 - **Visualizations**: Click on the waveform panel to switch among Waveform / Bar / Spectrogram.
 - **Pin & theme**: Use the pushpin to toggle always-on-top; switch between light and dark themes.
 - **Auto updates (optional)**: Only stable builds (tags like `v1.2.3`) receive OTA updates; pre-release builds must be updated manually.
@@ -53,6 +55,7 @@ Supports bilingual UI (Simplified Chinese / English). The language follows your 
 3. Common actions:
    - Pushpin (top-right): Toggle always-on-top.
    - Sun/Moon (top-right): Switch light/dark theme.
+   - Key icon (top-right): Toggle key display (Note / Camelot).
    - Click waveform: Switch visualization mode (Waveform / Bar / Spectrogram).
    - Refresh (top-right): Reset quickly to re-lock onto a new beat.
 
