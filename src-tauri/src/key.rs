@@ -31,6 +31,10 @@ pub fn camelot_from_key_name(key: &str) -> Option<&'static str> {
     None
 }
 
+pub fn pitch_class_name(pc: usize) -> &'static str {
+    MAJOR_KEYS[pc % 12]
+}
+
 fn camelot_number(key: &str) -> Option<u8> {
     let c = camelot_from_key_name(key)?;
     let mut num: u8 = 0;
@@ -58,6 +62,13 @@ pub struct KeyEstimate {
     pub confidence: f32,
     pub state: &'static str, // analyzing | atonal | uncertain | tracking
     pub effective_sec: f32,
+    pub tonal_ema: f32,
+    pub chroma_peak: f32,
+    pub chroma_peak2: f32,
+    pub bass_peak: f32,
+    pub bass_peak2: f32,
+    pub bass_tonic: Option<usize>,
+    pub bass_strength: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -340,7 +351,7 @@ impl Default for KeyConfig {
             key_profile: KeyProfile::EdmTriadV1,
             bass_max_hz: 250.0,
             bass_mix: 0.30,
-            bass_tonic_bonus: 0.12,
+            bass_tonic_bonus: 0.06,
             mag_gamma: 0.5,
             ema_window_sec: 12.0,
             tonal_window_sec: 2.0,
@@ -348,7 +359,7 @@ impl Default for KeyConfig {
             warmup_sec: 4.0,
             update_interval_ms: 500,
             min_level: 0.03,
-            tonal_min: 0.50,
+            tonal_min: 0.40,
             tau_low: 0.35,
             tau_high: 0.55,
             reset_on_silence_ms: 1500,
@@ -509,8 +520,13 @@ impl KeyEngine {
             "atonal"
         } else {
             let chroma = normalize_l1(self.chroma_ema)?;
+            let (chroma_peak, chroma_peak2) = top_two_peaks(&chroma);
             let bass = normalize_l1(self.bass_ema);
+            let (bass_peak, bass_peak2) = bass.map(|b| top_two_peaks(&b)).unwrap_or((0.0, 0.0));
             let bass_hint = bass.map(|b| bass_hint_from_chroma(b));
+            let (bass_tonic, bass_strength) = bass_hint
+                .map(|h| (Some(h.tonic), h.strength))
+                .unwrap_or((None, 0.0));
             let (best, second) = best_two_candidates_with_hint(
                 &chroma,
                 &self.major_tmpl,
@@ -546,6 +562,13 @@ impl KeyEngine {
                 confidence,
                 state,
                 effective_sec,
+                tonal_ema: self.tonal_ema,
+                chroma_peak,
+                chroma_peak2,
+                bass_peak,
+                bass_peak2,
+                bass_tonic,
+                bass_strength,
             });
         };
 
@@ -558,6 +581,13 @@ impl KeyEngine {
             confidence: 0.0,
             state,
             effective_sec,
+            tonal_ema: self.tonal_ema,
+            chroma_peak: 0.0,
+            chroma_peak2: 0.0,
+            bass_peak: 0.0,
+            bass_peak2: 0.0,
+            bass_tonic: None,
+            bass_strength: 0.0,
         })
     }
 

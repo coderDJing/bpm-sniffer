@@ -5,7 +5,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
 use crate::audio::AudioService;
-use crate::key::{camelot_from_key_name, KeyEngine, KeyTracker, NA_KEY};
+use crate::key::{camelot_from_key_name, pitch_class_name, KeyEngine, KeyTracker, NA_KEY};
 use crate::lang::is_log_zh;
 use crate::logging::{emit_friendly, now_ms, EMIT_KEY_LOGS, EMIT_TEXT_LOGS};
 use crate::state::{
@@ -241,8 +241,13 @@ pub fn run_capture(app: AppHandle) -> Result<()> {
                                 && (last_key_print.map_or(true, |k| k != display_key)
                                     || nowv.saturating_sub(last_key_print_ms) >= print_gap_ms);
                             if should_print && EMIT_KEY_LOGS {
-                                let txt_zh = format!("[调性] {} 置信度={:.2} 分数={:.2} gap={:.2} 次选={}({:.2}) 状态={} 有效={:.1}s 电平={:.2}", key_show, decision.raw.confidence, decision.raw.score, decision.raw.gap, top2, decision.raw.score2, decision.state, decision.raw.effective_sec, lvl);
-                                let txt_en = format!("[KEY] {} conf={:.2} score={:.2} gap={:.2} top2={}({:.2}) state={} eff={:.1}s lvl={:.2}", key_show, decision.raw.confidence, decision.raw.score, decision.raw.gap, top2, decision.raw.score2, decision.state, decision.raw.effective_sec, lvl);
+                                let bass_tonic = decision
+                                    .raw
+                                    .bass_tonic
+                                    .map(pitch_class_name)
+                                    .unwrap_or("-");
+                                let txt_zh = format!("[调性] {} 置信度={:.2} 分数={:.2} gap={:.2} 次选={}({:.2}) 状态={} 有效={:.1}s 电平={:.2} tonal={:.2} ch_pk={:.2}/{:.2} b_pk={:.2}/{:.2} bass={}({:.2})", key_show, decision.raw.confidence, decision.raw.score, decision.raw.gap, top2, decision.raw.score2, decision.state, decision.raw.effective_sec, lvl, decision.raw.tonal_ema, decision.raw.chroma_peak, decision.raw.chroma_peak2, decision.raw.bass_peak, decision.raw.bass_peak2, bass_tonic, decision.raw.bass_strength);
+                                let txt_en = format!("[KEY] {} conf={:.2} score={:.2} gap={:.2} top2={}({:.2}) state={} eff={:.1}s lvl={:.2} tonal={:.2} ch_pk={:.2}/{:.2} b_pk={:.2}/{:.2} bass={}({:.2})", key_show, decision.raw.confidence, decision.raw.score, decision.raw.gap, top2, decision.raw.score2, decision.state, decision.raw.effective_sec, lvl, decision.raw.tonal_ema, decision.raw.chroma_peak, decision.raw.chroma_peak2, decision.raw.bass_peak, decision.raw.bass_peak2, bass_tonic, decision.raw.bass_strength);
                                 let txt = if is_log_zh() { &txt_zh } else { &txt_en };
                                 eprintln!("{}", txt);
                                 emit_friendly(&app, txt_zh, txt_en);
