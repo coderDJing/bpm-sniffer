@@ -606,11 +606,16 @@ function FloatBall({ themeName, bpm, conf, viz, onExit, isLockedHighlight }: { t
   const widthGain = 2.24
   const radiusGain = 2.56
   const innerRadiusGain = 0.96
-  const shadowBlur = 9.6
+  const hitPadding = 2
   const segments = 64
   const segmentGap = 0.12
-  const marginPx = Math.ceil(shadowBlur + (baseStroke + widthGain) / 2 + radiusGain + 2)
-  const canvasSize = ballSize + marginPx * 2
+  // 临时调试：理论最大可视化占用（按 amp=1 计算）
+  const rBaseMax = Math.max(8, ballSize / 2 - baseStroke / 2 + radiusGain)
+  const maxOuterRadius = rBaseMax + radiusGain
+  const maxStrokeWidth = baseStroke + widthGain
+  const maxVizRadius = maxOuterRadius + maxStrokeWidth / 2
+  const canvasSizeRaw = Math.ceil((maxVizRadius + hitPadding) * 2)
+  const canvasSize = canvasSizeRaw % 2 === 0 ? canvasSizeRaw : (canvasSizeRaw + 1)
 
   const toRgba = React.useCallback(
     (alpha: number) => {
@@ -697,7 +702,7 @@ function FloatBall({ themeName, bpm, conf, viz, onExit, isLockedHighlight }: { t
     }
     rafId = requestAnimationFrame(tick)
     return () => { if (rafId) cancelAnimationFrame(rafId) }
-  }, [themeName, ballSize, canvasSize, toRgba, segments, segmentGap, baseStroke, radiusGain, widthGain, innerRadiusGain, shadowBlur])
+  }, [themeName, ballSize, canvasSize, toRgba, segments, segmentGap, baseStroke, radiusGain, widthGain, innerRadiusGain])
 
 
   async function handlePointerDown(e: React.PointerEvent) {
@@ -714,8 +719,8 @@ function FloatBall({ themeName, bpm, conf, viz, onExit, isLockedHighlight }: { t
           // 双保险：先尝试系统拖动；若失败则手动移动到光标附近（需要 window 权限）
           try { await win.startDragging() } catch (e) {
             try {
-              const x = Math.max(0, ev.screenX - Math.floor(ballSize/2))
-              const y = Math.max(0, ev.screenY - Math.floor(ballSize/2))
+              const x = Math.max(0, ev.screenX - Math.floor(canvasSize / 2))
+              const y = Math.max(0, ev.screenY - Math.floor(canvasSize / 2))
               // @ts-ignore 支持 Tauri v2 setPosition(Position)
               await (win as any).setPosition({ x, y })
               try { await (window as any).__TAURI_INVOKE__('save_float_pos', { x, y }) } catch {}
@@ -762,7 +767,7 @@ function FloatBall({ themeName, bpm, conf, viz, onExit, isLockedHighlight }: { t
         onMouseLeave={() => setHover(false)}
         style={{
           width: canvasSize,
-          height: canvasSize + 32,
+          height: canvasSize,
           position: 'relative',
           display: 'flex',
           flexDirection: 'column',

@@ -9,6 +9,7 @@ mod state;
 mod logging;
 mod capture;
 mod commands;
+mod float_ui;
 
 // 已迁移：logging 内部使用文件系统
 
@@ -22,6 +23,7 @@ use tauri::webview::WebviewWindowBuilder;
 use tauri::WebviewUrl;
 use tauri::{LogicalSize, Size};
 
+use float_ui::float_canvas_size_logical;
 use lang::{is_log_zh, set_log_lang_zh};
 
 fn main() {
@@ -150,9 +152,8 @@ fn main() {
                 }
             }
             if let Some(float_win) = app.get_webview_window("float") {
-                let float_w = 128.0f64;
-                let float_h = 128.0f64;
-                let _ = float_win.set_size(Size::Logical(LogicalSize::new(float_w, float_h)));
+                let s = float_canvas_size_logical();
+                let _ = float_win.set_size(Size::Logical(LogicalSize::new(s, s)));
             }
 
             // 开发模式下显式导航至 Vite 开发服务器，避免资源协议映射异常

@@ -4,6 +4,7 @@ use tauri::{LogicalSize, Size, Position, PhysicalPosition};
 use tauri::Url;
 
 use crate::capture::run_capture;
+use crate::float_ui::float_canvas_size_logical;
 use crate::lang::{is_log_zh, set_log_lang_zh};
 use crate::logging::{append_log_line, emit_friendly, now_ms};
 use crate::state::{AudioViz, BackendLog, DisplayBpm, CAPTURE_RUNNING, COLLECTED_LOGS, CURRENT_BPM, OUT_LEN, RESET_REQUESTED};
@@ -45,22 +46,20 @@ pub fn set_always_on_top(app: AppHandle, on_top: bool) -> Result<(), String> {
 #[tauri::command]
 pub fn enter_floating(app: AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("float") {
+        let float_size_log = float_canvas_size_logical();
         let _ = w.set_always_on_top(true);
         let _ = w.set_skip_taskbar(true);
         if let Ok(Some(mon)) = w.current_monitor() {
             let size = mon.size();
             let pos = mon.position();
             let scale = mon.scale_factor();
-            let wpx = (84.0 * scale) as i32;
+            let wpx = (float_size_log * scale).round() as i32;
             let margin = (40.0 * scale) as i32;
             let x = pos.x + size.width as i32 - wpx - margin;
             let y = pos.y + margin;
             let _ = w.set_position(Position::Physical(PhysicalPosition::new(x, y)));
         }
-        if let (Ok(sz), Ok(sf)) = (w.inner_size(), w.scale_factor()) {
-            let h_log = (sz.height as f64) / sf;
-            let _ = w.set_size(Size::Logical(LogicalSize::new(h_log, h_log)));
-        }
+        let _ = w.set_size(Size::Logical(LogicalSize::new(float_size_log, float_size_log)));
         let _ = w.navigate(Url::parse("tauri://localhost/index.html#float").unwrap_or_else(|_| Url::parse("tauri://localhost/#float").unwrap()));
         let _ = w.show();
         let _ = w.set_focus();
