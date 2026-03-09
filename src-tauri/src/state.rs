@@ -1,6 +1,7 @@
 use serde::Serialize;
 use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::AtomicBool;
+use tauri::menu::Menu;
 
 // 共享给各模块的展示结构体
 #[derive(Serialize, Clone, Copy)]
@@ -25,6 +26,12 @@ pub struct AudioViz {
     pub rms: f32,
 }
 
+// 托盘右键菜单句柄：主窗口态不显示“恢复窗口”，悬浮态显示
+pub struct TrayContextMenu {
+    pub normal: Menu<tauri::Wry>,
+    pub floating: Menu<tauri::Wry>,
+}
+
 // 全局共享状态（OnceLock+Mutex/Atomic）
 pub static CURRENT_BPM: OnceLock<Mutex<Option<DisplayBpm>>> = OnceLock::new();
 pub static COLLECTED_LOGS: OnceLock<Mutex<Vec<BackendLog>>> = OnceLock::new();
@@ -33,5 +40,6 @@ pub static CAPTURE_RUNNING: OnceLock<AtomicBool> = OnceLock::new();
 
 // 可视化输出的下采样波形长度（与前端保持一致）
 pub const OUT_LEN: usize = 192;
+pub const TRAY_ID: &str = "main-tray";
 
 

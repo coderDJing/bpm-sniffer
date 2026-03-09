@@ -25,6 +25,7 @@ use tauri::{LogicalSize, Size};
 
 use float_ui::float_canvas_size_logical;
 use lang::{is_log_zh, set_log_lang_zh};
+use state::{TrayContextMenu, TRAY_ID};
 
 fn main() {
     // 超早期日志，捕捉初始化前的崩溃
@@ -88,23 +89,39 @@ fn main() {
             // 输出一次当前日志语言（用于确认）
             if is_log_zh() { logging::append_log_line("[LANG] 日志语言=中文"); eprintln!("[语言] 日志输出：中文"); } else { logging::append_log_line("[LANG] log language=EN"); eprintln!("[LANG] log language: EN"); }
             // 系统托盘与菜单（多语言）
+            let restore_label = if is_log_zh() { "恢复窗口" } else { "Show Window" };
             let logs_label = if is_log_zh() { "分析日志" } else { "Logs" };
             let about_label = if is_log_zh() { "关于" } else { "About" };
             let quit_label = if is_log_zh() { "退出" } else { "Quit" };
             let logs = MenuItemBuilder::new(logs_label).id("logs").build(app)?;
             let about = MenuItemBuilder::new(about_label).id("about").build(app)?;
             let quit = MenuItemBuilder::new(quit_label).id("quit").build(app)?;
-            let menu = MenuBuilder::new(app)
+            let normal_menu = MenuBuilder::new(app)
                 .items(&[&logs, &about, &quit])
                 .build()?;
+            let restore = MenuItemBuilder::new(restore_label).id("restore").build(app)?;
+            let logs2 = MenuItemBuilder::new(logs_label).id("logs").build(app)?;
+            let about2 = MenuItemBuilder::new(about_label).id("about").build(app)?;
+            let quit2 = MenuItemBuilder::new(quit_label).id("quit").build(app)?;
+            let floating_menu = MenuBuilder::new(app)
+                .items(&[&restore, &logs2, &about2, &quit2])
+                .build()?;
+            app.manage(TrayContextMenu {
+                normal: normal_menu.clone(),
+                floating: floating_menu.clone(),
+            });
 
             let icon = app.default_window_icon().cloned();
             let tooltip = if is_log_zh() { "BPM Sniffer 正在运行" } else { "BPM Sniffer is running" };
-            let mut tray_builder = TrayIconBuilder::new()
-                .menu(&menu)
+            let mut tray_builder = TrayIconBuilder::with_id(TRAY_ID)
+                .menu(&normal_menu)
                 .tooltip(tooltip)
                 .on_menu_event(|app, event| {
                     match event.id().as_ref() {
+                        "restore" => {
+                            let tray_menu = app.state::<TrayContextMenu>();
+                            let _ = commands::exit_floating(app.clone(), tray_menu);
+                        }
                         "logs" => {
                             if let Some(win) = app.get_webview_window("logs") {
                                 let _ = win.set_focus();
@@ -172,7 +189,8 @@ fn main() {
             commands::get_log_lang,
             commands::enter_floating,
             commands::exit_floating,
-            commands::save_float_pos
+            commands::save_float_pos,
+            commands::popup_float_menu
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

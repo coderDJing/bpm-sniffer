@@ -302,11 +302,15 @@ export default function App() {
     return () => window.removeEventListener('hashchange', handler)
   }, [])
 
-  // 全局禁用右键与拖拽；选择在 #logs 允许，其他页面禁用
+  // 全局禁用右键与拖拽；#logs 与 #float 允许右键（#float 由原生菜单接管）
   useEffect(() => {
     const prevent = (e: Event) => { e.preventDefault(); e.stopPropagation() }
     const preventSel = (e: Event) => { e.preventDefault(); e.stopPropagation() }
-    window.addEventListener('contextmenu', prevent, { capture: true })
+    if (route !== '#logs' && route !== '#float') {
+      window.addEventListener('contextmenu', prevent, { capture: true })
+    } else {
+      window.removeEventListener('contextmenu', prevent, { capture: true } as any)
+    }
     window.addEventListener('dragstart', prevent, { capture: true })
     // 路由变化时，控制是否禁止选择
     if (route !== '#logs') {
@@ -704,8 +708,14 @@ function FloatBall({ themeName, bpm, conf, viz, onExit, isLockedHighlight }: { t
     return () => { if (rafId) cancelAnimationFrame(rafId) }
   }, [themeName, ballSize, canvasSize, toRgba, segments, segmentGap, baseStroke, radiusGain, widthGain, innerRadiusGain])
 
+  async function handleContextMenu(e: React.MouseEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+    try { await invoke('popup_float_menu') } catch {}
+  }
 
   async function handlePointerDown(e: React.PointerEvent) {
+    if (e.button !== 0) return
     dragStartRef.current = { x: e.clientX, y: e.clientY }
     const onMove = async (ev: PointerEvent) => {
       const s = dragStartRef.current
@@ -762,6 +772,7 @@ function FloatBall({ themeName, bpm, conf, viz, onExit, isLockedHighlight }: { t
     <main style={rootStyle}>
       <div
         onPointerDown={handlePointerDown}
+        onContextMenu={handleContextMenu}
         onDoubleClick={async (e) => { e.preventDefault(); e.stopPropagation(); await onExit() }}
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}

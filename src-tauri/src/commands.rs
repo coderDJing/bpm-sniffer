@@ -1,5 +1,5 @@
 use anyhow::Result;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri::{LogicalSize, Size, Position, PhysicalPosition};
 use tauri::Url;
 
@@ -7,7 +7,18 @@ use crate::capture::run_capture;
 use crate::float_ui::float_canvas_size_logical;
 use crate::lang::{is_log_zh, set_log_lang_zh};
 use crate::logging::{append_log_line, emit_friendly, now_ms};
-use crate::state::{AudioViz, BackendLog, DisplayBpm, CAPTURE_RUNNING, COLLECTED_LOGS, CURRENT_BPM, OUT_LEN, RESET_REQUESTED};
+use crate::state::{AudioViz, BackendLog, DisplayBpm, TrayContextMenu, TRAY_ID, CAPTURE_RUNNING, COLLECTED_LOGS, CURRENT_BPM, OUT_LEN, RESET_REQUESTED};
+
+fn switch_tray_menu(app: &AppHandle, tray_menu: &TrayContextMenu, is_floating: bool) {
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let menu = if is_floating {
+            tray_menu.floating.clone()
+        } else {
+            tray_menu.normal.clone()
+        };
+        let _ = tray.set_menu(Some(menu));
+    }
+}
 
 #[tauri::command]
 pub fn start_capture(app: AppHandle) -> Result<(), String> {
@@ -44,7 +55,7 @@ pub fn set_always_on_top(app: AppHandle, on_top: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn enter_floating(app: AppHandle) -> Result<(), String> {
+pub fn enter_floating(app: AppHandle, tray_menu: State<'_, TrayContextMenu>) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("float") {
         let float_size_log = float_canvas_size_logical();
         let _ = w.set_always_on_top(true);
@@ -68,11 +79,12 @@ pub fn enter_floating(app: AppHandle) -> Result<(), String> {
         let _ = main.set_skip_taskbar(true);
         let _ = main.hide();
     }
+    switch_tray_menu(&app, &tray_menu, true);
     Ok(())
 }
 
 #[tauri::command]
-pub fn exit_floating(app: AppHandle) -> Result<(), String> {
+pub fn exit_floating(app: AppHandle, tray_menu: State<'_, TrayContextMenu>) -> Result<(), String> {
     if let Some(f) = app.get_webview_window("float") { let _ = f.hide(); }
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.set_decorations(true);
@@ -98,11 +110,20 @@ pub fn exit_floating(app: AppHandle) -> Result<(), String> {
         }
         let _ = main.set_focus();
     }
+    switch_tray_menu(&app, &tray_menu, false);
     Ok(())
 }
 
 #[tauri::command]
 pub fn save_float_pos(_x: i32, _y: i32) -> Result<(), String> { Ok(()) }
+
+#[tauri::command]
+pub fn popup_float_menu(app: AppHandle, tray_menu: State<'_, TrayContextMenu>) -> Result<(), String> {
+    if let Some(float_win) = app.get_webview_window("float") {
+        float_win.popup_menu(&tray_menu.floating).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
 
 #[tauri::command]
 pub fn get_updater_endpoints(app: AppHandle) -> Vec<String> {
