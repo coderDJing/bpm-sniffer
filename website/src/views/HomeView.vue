@@ -46,6 +46,7 @@ const downloadUrl = ref(releaseSeed.downloadUrl)
 const releaseUrl = ref(releaseSeed.releaseUrl)
 const releaseAssetName = ref(releaseSeed.assetName)
 const releaseState = ref<'loading' | 'ready' | 'error'>(releaseSeed.state)
+const hasRuntimeRelease = ref(false)
 
 async function fetchLatestRelease() {
   releaseState.value = 'loading'
@@ -70,11 +71,15 @@ async function fetchLatestRelease() {
       downloadUrl.value = fallbackUrl
       releaseAssetName.value = ''
     }
+    hasRuntimeRelease.value = true
     releaseState.value = 'ready'
   } catch (err) {
     console.warn('[release]', err)
+    hasRuntimeRelease.value = false
     releaseState.value = 'error'
     downloadUrl.value = fallbackUrl
+    releaseUrl.value = fallbackUrl
+    releaseAssetName.value = ''
   }
 }
 
@@ -281,13 +286,19 @@ watch(routeLang, (next) => {
 const localized = computed(() => translations[lang.value])
 const features = computed(() => localized.value.features)
 const steps = computed(() => localized.value.steps)
-const releaseNotesTitleText = computed(() => localized.value.releaseNotesTitle(latestVersion.value))
-const releaseLinkLabel = computed(() =>
-  releaseState.value === 'ready' ? localized.value.releaseLinkReady : localized.value.releaseLoadingLink
+const releaseNotesTitleText = computed(() =>
+  localized.value.releaseNotesTitle(hasRuntimeRelease.value ? latestVersion.value : undefined)
 )
+const releaseLinkLabel = computed(() =>
+  hasRuntimeRelease.value && releaseState.value === 'ready'
+    ? localized.value.releaseLinkReady
+    : localized.value.releaseLoadingLink
+)
+const downloadHref = computed(() => (hasRuntimeRelease.value ? downloadUrl.value || fallbackUrl : fallbackUrl))
+const releaseHref = computed(() => (hasRuntimeRelease.value ? releaseUrl.value || fallbackUrl : fallbackUrl))
 const downloadCta = computed(() => {
   const locale = localized.value
-  if (latestVersion.value) return locale.downloadWithVersion(latestVersion.value)
+  if (hasRuntimeRelease.value && latestVersion.value) return locale.downloadWithVersion(latestVersion.value)
   return locale.downloadDefault
 })
 const releaseDateText = computed(() => {
@@ -413,7 +424,7 @@ onMounted(() => {
         {{ localized.heroLede }}
       </p>
       <div class="hero-actions">
-        <a class="btn primary" :href="downloadUrl" target="_blank" rel="noreferrer noopener">
+        <a class="btn primary" :href="downloadHref" target="_blank" rel="noreferrer noopener">
           {{ downloadCta }}
         </a>
         <a class="btn ghost" href="https://github.com/coderDJing/bpm-sniffer" target="_blank" rel="noreferrer noopener">
@@ -433,8 +444,8 @@ onMounted(() => {
             <small v-if="releaseDateText">{{ localized.releaseDatePrefix }}{{ releaseDateText }}</small>
           </div>
           <div>
-            <a :href="releaseUrl" target="_blank" rel="noreferrer noopener">{{ releaseLinkLabel }}</a>
-            <span v-if="releaseAssetName"> · {{ releaseAssetName }}</span>
+            <a :href="releaseHref" target="_blank" rel="noreferrer noopener">{{ releaseLinkLabel }}</a>
+            <span v-if="hasRuntimeRelease && releaseAssetName"> · {{ releaseAssetName }}</span>
           </div>
         </template>
         <template v-else-if="releaseState === 'error'">
