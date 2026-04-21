@@ -89,6 +89,7 @@ pnpm build
 
 - Installer output: `src-tauri/target/release/bundle/nsis/`
 - Tagging rules:
+  - Before pushing a release tag, `src-tauri/tauri.conf.json` `version` must exactly match the tag without the leading `v`. For example, `v1.1.8` requires app version `1.1.8`, while `v1.1.8-rc1` requires app version `1.1.8-rc1`.
   - Push `vX.Y.Z` to trigger a stable release (with OTA updates).
   - Push `vX.Y.Z-suffix` (must contain `-`, e.g. `-rc1`) to trigger a pre-release build (manual install only).
 

@@ -89,6 +89,7 @@ pnpm build
 
 - 安装包输出：`src-tauri/target/release/bundle/nsis/`
 - 打 Tag 规则：
+  - 推送发布 Tag 前，`src-tauri/tauri.conf.json` 里的 `version` 必须和去掉前导 `v` 后的 Tag 完全一致。比如 `v1.1.8` 要求应用版本是 `1.1.8`，而 `v1.1.8-rc1` 要求应用版本是 `1.1.8-rc1`。
   - 推送 `vX.Y.Z` 触发正式版（支持 OTA）。
   - 推送包含 `-` 的 `vX.Y.Z-后缀` 触发预发布（需手动安装）。
 

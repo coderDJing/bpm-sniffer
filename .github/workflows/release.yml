@@ -26,6 +26,19 @@ jobs:
         with:
           version: 9
 
+      - name: Validate app version against tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME:?missing GITHUB_REF_NAME}"
+          tag_no_v="${tag#v}"
+          conf_version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          if [[ "$tag_no_v" != "$conf_version" ]]; then
+            echo "::error::Tag version (${tag_no_v}) does not match src-tauri/tauri.conf.json version (${conf_version})."
+            exit 1
+          fi
+          echo "Version check passed: tag=${tag}, app=${conf_version}"
+
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
