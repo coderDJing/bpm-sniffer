@@ -181,6 +181,8 @@ fn main() {
             commands::start_capture,
             commands::stop_capture,
             commands::get_current_bpm,
+            commands::get_capture_source,
+            commands::set_capture_source,
             commands::set_always_on_top,
             commands::get_updater_endpoints,
             commands::get_log_dir,

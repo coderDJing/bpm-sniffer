@@ -7,7 +7,7 @@ use crate::capture::run_capture;
 use crate::float_ui::float_canvas_size_logical;
 use crate::lang::{is_log_zh, set_log_lang_zh};
 use crate::logging::{append_log_line, emit_friendly, now_ms};
-use crate::state::{AudioViz, BackendLog, DisplayBpm, TrayContextMenu, TRAY_ID, CAPTURE_RUNNING, COLLECTED_LOGS, CURRENT_BPM, OUT_LEN, RESET_REQUESTED};
+use crate::state::{set_capture_source_value, AudioViz, BackendLog, CaptureSource, DisplayBpm, TrayContextMenu, TRAY_ID, CAPTURE_RUNNING, COLLECTED_LOGS, CURRENT_BPM, OUT_LEN, RESET_REQUESTED};
 
 fn switch_tray_menu(app: &AppHandle, tray_menu: &TrayContextMenu, is_floating: bool) {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
@@ -44,6 +44,31 @@ pub fn get_log_lang() -> bool { is_log_zh() }
 #[tauri::command]
 pub fn get_current_bpm() -> Option<DisplayBpm> {
     CURRENT_BPM.get().and_then(|m| m.lock().ok().and_then(|g| *g))
+}
+
+#[tauri::command]
+pub fn get_capture_source() -> String {
+    crate::state::get_capture_source().as_str().to_string()
+}
+
+#[tauri::command]
+pub fn set_capture_source(app: AppHandle, source: String) -> Result<(), String> {
+    let next = CaptureSource::parse(&source).ok_or_else(|| format!("unknown capture source: {source}"))?;
+    let current = crate::state::get_capture_source();
+    if current == next { return Ok(()); }
+
+    set_capture_source_value(next);
+    if let Some(flag) = RESET_REQUESTED.get() { flag.store(true, std::sync::atomic::Ordering::SeqCst); }
+    let _ = app.emit("viz_update", AudioViz { samples: vec![0.0; OUT_LEN], rms: 0.0 });
+    if let Some(cell) = CURRENT_BPM.get() {
+        if let Ok(mut guard) = cell.lock() {
+            let payload = DisplayBpm { bpm: 0.0, confidence: 0.0, state: "analyzing", level: 0.0 };
+            *guard = Some(payload);
+            let _ = app.emit("bpm_update", payload);
+        }
+    }
+    emit_friendly(&app, format!("已切换到{}", next.zh_label()), format!("Switched to {}", next.en_label()));
+    Ok(())
 }
 
 #[tauri::command]

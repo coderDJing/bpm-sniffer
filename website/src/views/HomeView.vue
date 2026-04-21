@@ -151,10 +151,10 @@ type TranslationEntry = {
 
 const translations: Record<SiteLang, TranslationEntry> = {
   zh: {
-    eyebrow: 'System audio · Real-time BPM · Zero driver',
+    eyebrow: 'System audio · Mic input · Real-time BPM',
     heroTitle: 'BPM Sniffer，让任何音源都能秒出 BPM：轻量、开源、无需导入，一开即测。',
     heroLede:
-      'Windows 10+ 上即装即用的 BPM 侦测工具。自动监听系统播放的音乐，保持稳定数值、绚烂可视化，并通过 OTA 更新始终保持最佳手感。',
+      'Windows 10+ 上即装即用的 BPM 侦测工具。默认监听系统播放的音乐，也可切换麦克风收音，保持稳定数值、绚烂可视化，并通过 OTA 更新始终保持最佳手感。',
     heroSecondaryCta: '浏览 GitHub',
     downloadDefault: '下载最新正式版',
     downloadWithVersion: (version: string) => `立即下载 ${version}`,
@@ -166,7 +166,7 @@ const translations: Record<SiteLang, TranslationEntry> = {
     releaseNotesTitle: (version?: string) => `${version || '最新版本'} 更新摘要`,
     featuresTitle: '为每一个需要快速知晓 BPM 的人打造',
     features: [
-      { title: '系统回环捕获', detail: '无需虚拟声卡或麦克风权限，安装即用，兼容绝大多数播放器与浏览器音源。' },
+      { title: '系统回环与麦克风', detail: '默认读取电脑内部声音，无需虚拟声卡；需要外部声源时可一键切到默认麦克风。' },
       { title: '稳定视觉反馈', detail: '浮动窗口与多种波形可视化与主题同步，无论何种音源都能随时掌握当前 BPM。' },
       { title: 'OTA 自动更新', detail: 'GitHub 稳定版支持 OTA，预发布版本由你手动体验，保证生产环境的稳定。' },
       { title: '完全本地化', detail: '全流程离线处理，无需上传音频，配合中英双语界面，适配各种场景。' }
@@ -175,7 +175,7 @@ const translations: Record<SiteLang, TranslationEntry> = {
     steps: [
       { label: '01', title: '下载', detail: '点击“立即下载”跳转到最新正式版资产，或直接访问 GitHub Releases。' },
       { label: '02', title: '安装', detail: '运行安装包，按照向导选择路径或快捷方式，几秒即可部署完成。' },
-      { label: '03', title: '播放即测', detail: '打开任意播放器或网页播放音乐，BPM Sniffer 会自动捕获并显示 BPM。' }
+      { label: '03', title: '播放即测', detail: '打开任意播放器或网页播放音乐，或切换到麦克风收音，BPM Sniffer 会自动捕获并显示 BPM。' }
     ],
     langToggleLabel: 'English',
     demo: {
@@ -191,16 +191,16 @@ const translations: Record<SiteLang, TranslationEntry> = {
     seo: {
       title: 'BPM Sniffer · 系统音频实时 BPM 侦测工具',
       description:
-        'BPM Sniffer 是一款面向 Windows 10+ 的系统音频 BPM 检测工具，安装即用、零驱动依赖，提供稳定数值、可视化与 OTA 更新。',
+        'BPM Sniffer 是一款面向 Windows 10+ 的 BPM 检测工具，默认读取系统音频，也可切换麦克风收音，提供稳定数值、可视化与 OTA 更新。',
       keywords: ['BPM Sniffer', 'BPM 检测', '节拍侦测', '系统音频', 'DJ 工具'],
       locale: 'zh_CN'
     }
   },
   en: {
-    eyebrow: 'System audio · Real-time BPM · Zero driver',
+    eyebrow: 'System audio · Mic input · Real-time BPM',
     heroTitle: 'BPM Sniffer makes any audio source report its BPM instantly—lightweight, open source, no import required.',
     heroLede:
-      'A plug-and-play BPM detector for Windows 10+. It listens to whatever your system plays, keeps the numbers steady with vivid visuals, and stays sharp through OTA updates.',
+      'A plug-and-play BPM detector for Windows 10+. It listens to system audio by default, can switch to microphone input, keeps the numbers steady with vivid visuals, and stays sharp through OTA updates.',
     heroSecondaryCta: 'View on GitHub',
     downloadDefault: 'Download the latest release',
     downloadWithVersion: (version: string) => `Download ${version}`,
@@ -213,8 +213,8 @@ const translations: Record<SiteLang, TranslationEntry> = {
     featuresTitle: 'Built for anyone who needs to know the BPM instantly',
     features: [
       {
-        title: 'System loopback capture',
-        detail: 'No virtual sound card or mic permission required. Works with players, browsers, and any system audio.'
+        title: 'System audio and mic input',
+        detail: 'No virtual sound card required. Use system audio by default, or switch to the default microphone when you need an external source.'
       },
       {
         title: 'Consistent visual feedback',
@@ -230,7 +230,7 @@ const translations: Record<SiteLang, TranslationEntry> = {
     steps: [
       { label: '01', title: 'Download', detail: 'Use the “Download now” button or head to GitHub Releases for the latest installer.' },
       { label: '02', title: 'Install', detail: 'Run the installer, choose shortcuts if you like, and finish setup within seconds.' },
-      { label: '03', title: 'Play anything', detail: 'Start any player or web audio—BPM Sniffer automatically locks on and shows the live BPM.' }
+      { label: '03', title: 'Play anything', detail: 'Start any player or web audio, or switch to mic input. BPM Sniffer locks on and shows the live BPM.' }
     ],
     langToggleLabel: '中文',
     demo: {
@@ -246,7 +246,7 @@ const translations: Record<SiteLang, TranslationEntry> = {
     seo: {
       title: 'BPM Sniffer · Real-time system audio BPM detector',
       description:
-        'BPM Sniffer is a lightweight Windows BPM detector that listens to any system audio, keeps the BPM steady with visuals, and updates itself over the air.',
+        'BPM Sniffer is a lightweight Windows BPM detector that listens to system audio or microphone input, keeps the BPM steady with visuals, and updates itself over the air.',
       keywords: ['BPM Sniffer', 'BPM detector', 'beat detection', 'system audio', 'DJ tool'],
       locale: 'en_US'
     }

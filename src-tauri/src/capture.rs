@@ -7,7 +7,7 @@ use tauri::{AppHandle, Emitter};
 use crate::audio::AudioService;
 use crate::lang::is_log_zh;
 use crate::logging::{emit_friendly, now_ms, EMIT_TEXT_LOGS};
-use crate::state::{AudioViz, BackendLog, DisplayBpm, COLLECTED_LOGS, CURRENT_BPM, OUT_LEN, RESET_REQUESTED};
+use crate::state::{get_capture_source, AudioViz, BackendLog, CaptureSource, DisplayBpm, COLLECTED_LOGS, CURRENT_BPM, OUT_LEN, RESET_REQUESTED};
 use crate::tempo::{make_backend, TempoBackend};
 
 // 分析支路响度标准化配置（与原 main.rs 一致）
@@ -23,6 +23,10 @@ const SC_LP_HZ: f32 = 180.0;
 const NORM_MAX_GAIN_DB_EXT: f32 = 42.0;
 const RHYTHM_RATIO_THR: f32 = 0.25;
 const MAX_GAIN_DB_WHEN_LOW_RATIO: f32 = 18.0;
+const VIZ_SILENT_RMS_SYSTEM: f32 = 0.015;
+const VIZ_SILENT_RMS_MICROPHONE: f32 = 0.0035;
+const VIZ_GAIN_SYSTEM: f32 = 1.0;
+const VIZ_GAIN_MICROPHONE: f32 = 4.0;
 
 fn level_from_frames(frames: &[f32]) -> f32 {
     if frames.is_empty() { return 0.0; }
@@ -34,8 +38,9 @@ fn level_from_frames(frames: &[f32]) -> f32 {
 }
 
 pub fn run_capture(app: AppHandle) -> Result<()> {
-    let (svc, rx, sr_rx) = AudioService::start_loopback()?;
-    emit_friendly(&app, "已开始捕获系统音频", "Started capturing system audio");
+    let (svc, rx, sr_rx) = AudioService::start_capture()?;
+    let source = get_capture_source();
+    emit_friendly(&app, format!("已开始捕获{}", source.zh_label()), format!("Started capturing {}", source.en_label()));
 
     let mut backend: Box<dyn TempoBackend> = make_backend(svc.sample_rate());
 
@@ -134,11 +139,15 @@ pub fn run_capture(app: AppHandle) -> Result<()> {
                         let mut rms_acc = 0.0f32;
                         for &v in &buf { rms_acc += v * v; }
                         let rms = (rms_acc / len as f32).sqrt().min(1.0);
-                        let viz_rms = rms;
+                        let (viz_silent_rms, viz_gain) = match get_capture_source() {
+                            CaptureSource::Microphone => (VIZ_SILENT_RMS_MICROPHONE, VIZ_GAIN_MICROPHONE),
+                            CaptureSource::System => (VIZ_SILENT_RMS_SYSTEM, VIZ_GAIN_SYSTEM),
+                        };
+                        let viz_rms = (rms * viz_gain).min(1.0);
                         let nowv = now_ms();
                         if nowv.saturating_sub(last_viz_ms) >= 16 {
-                            if rms < 0.015 {
-                                let _ = app.emit_to("main", "viz_update", AudioViz { samples: vec![0.0; OUT_LEN], rms: viz_rms });
+                            if rms < viz_silent_rms {
+                                let _ = app.emit_to("main", "viz_update", AudioViz { samples: vec![0.0; OUT_LEN], rms: 0.0 });
                             } else {
                                 let step = (len as f32 / OUT_LEN as f32).max(1.0);
                                 let mut out: Vec<f32> = Vec::with_capacity(OUT_LEN);
@@ -151,7 +160,7 @@ pub fn run_capture(app: AppHandle) -> Result<()> {
                                     if i0 < i1 {
                                         for i in i0..i1 { acc += buf[i]; cnt += 1; }
                                     }
-                                    out.push(if cnt > 0 { (acc / cnt as f32).clamp(-1.0, 1.0) } else { 0.0 });
+                                    out.push(if cnt > 0 { ((acc / cnt as f32) * viz_gain).clamp(-1.0, 1.0) } else { 0.0 });
                                     idx_f += step;
                                 }
                                 let _ = app.emit_to("main", "viz_update", AudioViz { samples: out, rms: viz_rms });

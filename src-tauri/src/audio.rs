@@ -9,15 +9,31 @@ use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemFre
 use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0, WAIT_TIMEOUT};
 
+use crate::state::{get_capture_source, CaptureSource};
+
 const WAVE_FORMAT_PCM: u16 = 1;
 const WAVE_FORMAT_IEEE_FLOAT: u16 = 3;
+
+fn endpoint_flow(source: CaptureSource) -> EDataFlow {
+    match source {
+        CaptureSource::System => eRender,
+        CaptureSource::Microphone => eCapture,
+    }
+}
+
+fn stream_flags(source: CaptureSource) -> u32 {
+    match source {
+        CaptureSource::System => AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+        CaptureSource::Microphone => AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+    }
+}
 
 pub struct AudioService {
     sample_rate: u32,
 }
 
 impl AudioService {
-    pub fn start_loopback() -> Result<(Self, Receiver<Vec<f32>>, Receiver<u32>)> {
+    pub fn start_capture() -> Result<(Self, Receiver<Vec<f32>>, Receiver<u32>)> {
         let (frames_tx, frames_rx) = bounded::<Vec<f32>>(16);
         // 初始化结果通道：Ok(sample_rate) 或 Err
         let (init_tx, init_rx) = bounded::<Result<u32>>(1);
@@ -37,10 +53,14 @@ impl AudioService {
             let mut sent_init = false;
             // 最近一次成功启动时的采样率，用于变化检测
             let mut last_sr: Option<u32> = None;
+            let mut last_source: Option<CaptureSource> = None;
 
             loop {
-                // 获取当前默认渲染端点并激活 AudioClient
-                let device = match enumerator.GetDefaultAudioEndpoint(eRender, eConsole) {
+                let source = get_capture_source();
+                let data_flow = endpoint_flow(source);
+
+                // 获取当前默认端点并激活 AudioClient
+                let device = match enumerator.GetDefaultAudioEndpoint(data_flow, eConsole) {
                     Ok(v) => v,
                     Err(e) => {
                         if !sent_init { let _ = init_tx.send(Err(anyhow!("{e:?}"))); }
@@ -87,7 +107,7 @@ impl AudioService {
                 let buffer_duration = 200_000; // 20ms (100ns 单位)
                 if let Err(e) = audio_client.Initialize(
                     AUDCLNT_SHAREMODE_SHARED,
-                    AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                    stream_flags(source),
                     buffer_duration,
                     0,
                     mix,
@@ -114,9 +134,10 @@ impl AudioService {
                 };
 
                 // 采样率变化通知（含首次启动）
-                if last_sr.map_or(true, |prev| prev != sample_rate) {
+                if last_sr.map_or(true, |prev| prev != sample_rate) || last_source.map_or(true, |prev| prev != source) {
                     let _ = sr_tx.try_send(sample_rate);
                     last_sr = Some(sample_rate);
+                    last_source = Some(source);
                 }
                 // 首次初始化时返回采样率
                 if !sent_init { let _ = init_tx.send(Ok(sample_rate)); sent_init = true; }
@@ -124,9 +145,11 @@ impl AudioService {
                 // 开始流并进入捕获循环；任何错误或检测到默认设备变更将导致跳出并重建
                 let _ = audio_client.Start();
                 loop {
-                    // 检测默认设备是否改变（例如切换到蓝牙耳机）
+                    if get_capture_source() != source { break; }
+
+                    // 检测默认设备是否改变（例如切换到蓝牙耳机或默认麦克风）
                     let mut changed = false;
-                    if let Ok(def) = enumerator.GetDefaultAudioEndpoint(eRender, eConsole) {
+                    if let Ok(def) = enumerator.GetDefaultAudioEndpoint(endpoint_flow(source), eConsole) {
                         if let (Ok(id_now), Ok(id_cur)) = (def.GetId(), device.GetId()) {
                             let s_now = id_now.to_string().unwrap_or_default();
                             let s_cur = id_cur.to_string().unwrap_or_default();

@@ -11,6 +11,8 @@ import refresh from './assets/refresh.png'
 import fullScreenBlack from './assets/fullScreenBlack.png'
 import fullScreenWhite from './assets/fullScreenWhite.png'
 import floatingWindow from './assets/floatingWindow.png'
+import audioSystem from './assets/audioSystem.svg'
+import audioMicrophone from './assets/audioMicrophone.svg'
 // @ts-ignore: optional plugin at runtime
 import { check } from '@tauri-apps/plugin-updater'
 import { getVersion } from '@tauri-apps/api/app'
@@ -19,6 +21,7 @@ import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 
 type DisplayBpm = { bpm: number, confidence: number, state: 'tracking'|'uncertain'|'analyzing', level: number }
 type AudioViz = { samples: number[], rms: number }
+type CaptureSource = 'system' | 'microphone'
 
 export default function App() {
   const [route, setRoute] = useState<string>(typeof window !== 'undefined' ? window.location.hash : '')
@@ -26,6 +29,7 @@ export default function App() {
   const [conf, setConf] = useState<number | null>(null)
   const [state, setState] = useState<DisplayBpm['state']>('analyzing')
   const [alwaysOnTop, setAlwaysOnTop] = useState<boolean>(false)
+  const [captureSource, setCaptureSource] = useState<CaptureSource>('system')
   const [viz, setViz] = useState<AudioViz | null>(null)
   const [vizMode, setVizMode] = useState<'wave'|'bars'|'waterfall'>('wave')
   const [themeName, setThemeName] = useState<'dark' | 'light'>('dark')
@@ -89,6 +93,21 @@ export default function App() {
     manualTapTimesRef.current = []
   }
 
+  function resetBpmPresentation(keepManualMode = false) {
+    if (!keepManualMode) {
+      resetManualMode()
+    }
+    setBpm(null); bpmRef.current = null
+    setConf(null)
+    setState('analyzing')
+    setViz(null)
+    highlightLockRef.current = { locked: false, bpm: null }
+    lowConfStreakRef.current = { bpm: null, count: 0 }
+    lastNonSilentAtRef.current = Date.now()
+    silenceTriggeredRef.current = false
+    if (showWaitingRef.current) { setShowWaiting(false); showWaitingRef.current = false }
+  }
+
   function handleManualPointerDown(e: React.PointerEvent) {
     e.preventDefault()
     e.stopPropagation()
@@ -138,15 +157,7 @@ export default function App() {
     const keepManualMode = options?.keepManualMode ?? false
     try {
       // 清空前端可见状态
-      if (!keepManualMode) {
-        resetManualMode()
-      }
-      setBpm(null); bpmRef.current = null
-      setConf(null)
-      setState('analyzing')
-      setViz(null)
-      highlightLockRef.current = { locked: false, bpm: null }
-      lowConfStreakRef.current = { bpm: null, count: 0 }
+      resetBpmPresentation(keepManualMode)
       // 通知后端软重置
       try { await invoke('reset_backend') } catch {}
     } finally {
@@ -189,6 +200,13 @@ export default function App() {
           const savedViz = localStorage.getItem('bpm_viz_mode')
           if (savedViz === 'wave' || savedViz === 'bars' || savedViz === 'waterfall') {
             setVizMode(savedViz as 'wave'|'bars'|'waterfall')
+          }
+        } catch {}
+
+        try {
+          const source = await invoke<CaptureSource>('get_capture_source')
+          if (source === 'system' || source === 'microphone') {
+            setCaptureSource(source)
           }
         } catch {}
 
@@ -350,8 +368,6 @@ export default function App() {
   const label = showWaiting ? t('state_waiting_audio') : (state === 'analyzing' ? t('state_analyzing') : (isLockedHighlight ? t('state_tracking') : baseLabel))
   const displayBpm = currentDisplayedBpm != null ? Math.round(currentDisplayedBpm) : 0
 
-  // 已固定后端为基础模式，无切换
-
   async function toggleAlwaysOnTop() {
     try {
       const next = !alwaysOnTop
@@ -360,6 +376,17 @@ export default function App() {
       try { localStorage.setItem('bpm_on_top', next ? '1' : '0') } catch {}
     } catch (e) {
       console.error(tn('置顶切换失败', 'Toggle pin failed'), e)
+    }
+  }
+
+  async function toggleCaptureSource() {
+    const next: CaptureSource = captureSource === 'system' ? 'microphone' : 'system'
+    try {
+      await invoke('set_capture_source', { source: next })
+      setCaptureSource(next)
+      resetBpmPresentation(false)
+    } catch (e) {
+      console.error(tn('收音源切换失败', 'Toggle audio source failed'), e)
     }
   }
 
@@ -444,7 +471,7 @@ export default function App() {
       {/* 简易波形可视化 */}
       {!hideViz && (
         <div style={{marginTop:'auto', marginBottom:7}}>
-          <VizPanel theme={theme} hideRms={hideRms} viz={viz} mode={vizMode} onToggle={() => setVizMode(m => m==='wave' ? 'bars' : (m==='bars' ? 'waterfall' : 'wave'))} themeName={themeName} />
+          <VizPanel theme={theme} hideRms={hideRms} viz={viz} mode={vizMode} onToggle={() => setVizMode(m => m==='wave' ? 'bars' : (m==='bars' ? 'waterfall' : 'wave'))} themeName={themeName} captureSource={captureSource} />
         </div>
       )}
 
@@ -455,6 +482,7 @@ export default function App() {
             await doRefresh()
           }}
           title={t('refresh') || '刷新'}
+          aria-label={t('refresh') || '刷新'}
           style={{
             background:'transparent',
             border:'none',
@@ -482,6 +510,7 @@ export default function App() {
         <button
           onClick={toggleTheme}
           title={themeName === 'dark' ? t('theme_toggle_to_light') : t('theme_toggle_to_dark')}
+          aria-label={themeName === 'dark' ? t('theme_toggle_to_light') : t('theme_toggle_to_dark')}
           style={{
             background:'transparent',
             border:'none',
@@ -530,6 +559,7 @@ export default function App() {
         <button
           onClick={toggleAlwaysOnTop}
           title={alwaysOnTop ? t('pin_title_on') : t('pin_title_off')}
+          aria-label={alwaysOnTop ? t('pin_title_on') : t('pin_title_off')}
           style={{
             background:'transparent',
             border:'none',
@@ -555,12 +585,37 @@ export default function App() {
           />
         </button>
         <button
+          onClick={toggleCaptureSource}
+          title={captureSource === 'system' ? t('audio_source_system_title') : t('audio_source_microphone_title')}
+          aria-label={captureSource === 'system' ? t('audio_source_system_title') : t('audio_source_microphone_title')}
+          style={{
+            background:'transparent',
+            border:'none',
+            padding:0,
+            cursor:'pointer',
+            width:25,
+            height:25,
+            display:'flex',
+            alignItems:'center',
+            justifyContent:'center'
+          }}
+        >
+          <img
+            src={captureSource === 'system' ? audioSystem : audioMicrophone}
+            alt={captureSource === 'system' ? t('audio_source_system_title') : t('audio_source_microphone_title')}
+            width={25}
+            height={25}
+            draggable={false}
+          />
+        </button>
+        <button
           onClick={async () => {
             try {
               await invoke('enter_floating')
             } catch (e) { }
           }}
           title={t('enter_floating')}
+          aria-label={t('enter_floating')}
           style={{
             background:'transparent',
             border:'none',
@@ -949,7 +1004,7 @@ function CopyItem({ text, label }: { text: string, label: string }) {
   )
 }
 
-function VizPanel({ theme, hideRms, viz, mode, onToggle, themeName }: { theme: any, hideRms: boolean, viz: AudioViz | null, mode: 'wave'|'bars'|'waterfall', onToggle: () => void, themeName: 'dark'|'light' }) {
+function VizPanel({ theme, hideRms, viz, mode, onToggle, themeName, captureSource }: { theme: any, hideRms: boolean, viz: AudioViz | null, mode: 'wave'|'bars'|'waterfall', onToggle: () => void, themeName: 'dark'|'light', captureSource: CaptureSource }) {
   // 自适应高度：在默认窗口高度（≈390）时保持 120px，随着窗口拉高按比例增大，设上下限
   const baseWindowH = 390
   const baseVizH = 120
@@ -962,7 +1017,8 @@ function VizPanel({ theme, hideRms, viz, mode, onToggle, themeName }: { theme: a
   const accent = theme.accent
   const rmsRaw = viz?.rms ?? 0
   const samples = viz?.samples ?? []
-  const silentCut = 0.015
+  const isMicrophone = captureSource === 'microphone'
+  const silentCut = isMicrophone ? 0.004 : 0.015
   // 快速静音判定：当音量相对上一帧骤降，直接视为静音（解决“戛然而止”不归零）
   const prevRmsRef = React.useRef(0)
   const [fastSilent, setFastSilent] = React.useState(false)
@@ -1016,9 +1072,13 @@ function VizPanel({ theme, hideRms, viz, mode, onToggle, themeName }: { theme: a
     peakRef.current = isSilent ? 0.2 : (peakRef.current * 0.95 + localPeak * 0.05)
   }, [smoothSamples, isSilent])
   // 降低基础增益，并限制上下限，取折中视觉效果
-  const base = Math.max(0.12, Math.min(0.6, peakRef.current))
-  let gain = 0.6 / base
-  gain = Math.max(0.8, Math.min(2.2, gain))
+  const baseFloor = isMicrophone ? 0.08 : 0.12
+  const baseCeil = isMicrophone ? 0.45 : 0.6
+  const targetLevel = isMicrophone ? 0.72 : 0.6
+  const gainMax = isMicrophone ? 3.4 : 2.2
+  const base = Math.max(baseFloor, Math.min(baseCeil, peakRef.current))
+  let gain = targetLevel / base
+  gain = Math.max(0.8, Math.min(gainMax, gain))
 
   // Waterfall 历史与参数占位（自适应将在计算有效高度后进行）
   const histRef = React.useRef<number[][]>([])
@@ -1154,6 +1214,7 @@ function VizPanel({ theme, hideRms, viz, mode, onToggle, themeName }: { theme: a
           <button
             onClick={enterFullscreen}
             title={tn('全屏','Fullscreen')}
+            aria-label={tn('全屏','Fullscreen')}
             style={{
               position:'absolute',
               right:8,

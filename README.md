@@ -14,7 +14,7 @@
 
 Lightweight local real-time BPM (beats per minute) detector.
 Play music in any player or web page, and it will automatically display the current song's BPM in real time.
-No virtual sound card required — works out of the box.
+No virtual sound card required. It defaults to system audio and can switch to the default microphone input.
 
 Supports bilingual UI (Simplified Chinese / English). The language follows your system locale.
 
@@ -27,13 +27,14 @@ Supports bilingual UI (Simplified Chinese / English). The language follows your 
 
 ### What is this
 
-- Automatically detects and displays the BPM from audio currently playing on your system.
+- Automatically detects and displays the BPM from audio currently playing on your system, with an optional microphone input mode.
 - Compact floating window with always-on-top, light/dark themes, and simple visualizations.
 - Entirely local processing. No audio is collected or uploaded.
 
 ### Key Features
 
 - **Ready to use**: No extra drivers or virtual sound card needed.
+- **Audio source toggle**: Defaults to system audio; use the top-right source button to switch to microphone input.
 - **Stable readings**: Stabilization and anti-jitter for track changes and weak beats.
 - **Visualizations**: Click on the waveform panel to switch among Waveform / Bar / Spectrogram.
 - **Pin & theme**: Use the pushpin to toggle always-on-top; switch between light and dark themes.
@@ -52,15 +53,16 @@ Supports bilingual UI (Simplified Chinese / English). The language follows your 
 2. Open BPM Sniffer. The BPM will automatically follow the current track.
 3. Common actions:
    - Pushpin (top-right): Toggle always-on-top.
+   - Speaker/Mic (top-right): Switch between system audio and microphone input.
    - Sun/Moon (top-right): Switch light/dark theme.
    - Click waveform: Switch visualization mode (Waveform / Bar / Spectrogram).
    - Refresh (top-right): Reset quickly to re-lock onto a new beat.
 
 ### FAQ
 
-- Not seeing values / always 0? Make sure your system is playing audio, the player volume is not muted, or click Refresh (top-right) and try again.
+- Not seeing values / always 0? Make sure your selected source has audio, the player volume/input level is not muted, or click Refresh (top-right) and try again.
 - Why does the number wiggle slightly sometimes? This is normal during track changes or transitions; it will stabilize shortly.
-- Does it require microphone permission? No. The app reads the system loopback audio and does not use the microphone.
+- Does it require microphone permission? System audio mode does not. Microphone mode uses the default microphone and may require Windows microphone privacy permission.
 - Can I switch the UI language? It currently follows the system language (Simplified Chinese / English).
 
 ### Platform & Privacy

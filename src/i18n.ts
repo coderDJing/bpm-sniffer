@@ -41,6 +41,8 @@ const dict: Dict = {
   pin_on: { 'zh-CN': '已置顶', en: 'Pinned' },
   pin_title_on: { 'zh-CN': '已置顶（点击取消）', en: 'Pinned (unpin)' },
   pin_title_off: { 'zh-CN': '置顶', en: 'Pin' },
+  audio_source_system_title: { 'zh-CN': '当前：电脑内部声音（点击切换麦克风）', en: 'Current: system audio (switch to mic)' },
+  audio_source_microphone_title: { 'zh-CN': '当前：麦克风收音（点击切换电脑内部声音）', en: 'Current: microphone (switch to system audio)' },
   about_title: { 'zh-CN': '关于', en: 'About' },
   about_project: { 'zh-CN': '项目地址：', en: 'Project:' },
   about_author: { 'zh-CN': '作者：', en: 'Author:' },
