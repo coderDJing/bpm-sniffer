@@ -10,9 +10,87 @@ use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0, WAIT_TIMEOUT};
 
 use crate::state::{get_capture_source, CaptureSource};
+use crate::logging::append_log_line;
 
 const WAVE_FORMAT_PCM: u16 = 1;
 const WAVE_FORMAT_IEEE_FLOAT: u16 = 3;
+// 44.1kHz 是现有算法已验证的输入基准；只给更高采样率设备限速，低采样率设备原样通过。
+const MAX_ANALYSIS_SAMPLE_RATE: u32 = 44_100;
+
+/// 跨 WASAPI 数据包保持状态的盒式低通降采样器。
+/// 相位不能在每个数据包重置，否则 44.1kHz 等非整数比采样率会出现时间抖动。
+struct AnalysisDownsampler {
+    input_rate: u32,
+    output_rate: u32,
+    phase: u64,
+    sum: f64,
+    count: u32,
+}
+
+impl AnalysisDownsampler {
+    fn new(input_rate: u32) -> Self {
+        Self {
+            input_rate,
+            output_rate: input_rate.min(MAX_ANALYSIS_SAMPLE_RATE),
+            phase: 0,
+            sum: 0.0,
+            count: 0,
+        }
+    }
+
+    fn output_rate(&self) -> u32 { self.output_rate }
+
+    fn process(&mut self, input: &[f32]) -> Vec<f32> {
+        let mut output = Vec::with_capacity(
+            input.len().saturating_mul(self.output_rate as usize) / self.input_rate as usize + 2,
+        );
+        for &sample in input {
+            self.sum += sample as f64;
+            self.count += 1;
+            self.phase += self.output_rate as u64;
+            if self.phase >= self.input_rate as u64 {
+                output.push((self.sum / self.count as f64) as f32);
+                self.phase -= self.input_rate as u64;
+                self.sum = 0.0;
+                self.count = 0;
+            }
+        }
+        output
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AnalysisDownsampler;
+
+    #[test]
+    fn preserves_timing_across_arbitrary_packet_boundaries() {
+        let input: Vec<f32> = (0..44_100).map(|i| i as f32 / 44_100.0).collect();
+
+        let mut whole = AnalysisDownsampler::new(44_100);
+        let expected = whole.process(&input);
+
+        let mut packetized = AnalysisDownsampler::new(44_100);
+        let mut actual = Vec::new();
+        for packet in input.chunks(735) {
+            actual.extend(packetized.process(packet));
+        }
+
+        assert_eq!(expected.len(), 44_100);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn caps_high_rate_input_at_the_algorithm_baseline() {
+        let input = vec![0.25; 192_000];
+        let mut downsampler = AnalysisDownsampler::new(192_000);
+
+        let output = downsampler.process(&input);
+
+        assert_eq!(downsampler.output_rate(), 44_100);
+        assert_eq!(output.len(), 44_100);
+    }
+}
 
 fn endpoint_flow(source: CaptureSource) -> EDataFlow {
     match source {
@@ -93,6 +171,10 @@ impl AudioService {
                 }
                 let mix = &*pwfx;
                 let sample_rate = mix.nSamplesPerSec;
+                let mut downsampler = AnalysisDownsampler::new(sample_rate);
+                let analysis_sample_rate = downsampler.output_rate();
+                let mut dropped_packets = 0u64;
+                let mut last_drop_log = std::time::Instant::now();
 
                 // 事件 & 初始化共享环回
                 let h_event = match CreateEventW(None, false, false, PCWSTR::null()) {
@@ -135,12 +217,20 @@ impl AudioService {
 
                 // 采样率变化通知（含首次启动）
                 if last_sr.map_or(true, |prev| prev != sample_rate) || last_source.map_or(true, |prev| prev != source) {
-                    let _ = sr_tx.try_send(sample_rate);
+                    let _ = sr_tx.try_send(analysis_sample_rate);
+                    let message = format!(
+                        "[AUDIO] input_rate={}Hz analysis_rate={}Hz source={}",
+                        sample_rate,
+                        analysis_sample_rate,
+                        source.as_str(),
+                    );
+                    eprintln!("{}", message);
+                    append_log_line(&message);
                     last_sr = Some(sample_rate);
                     last_source = Some(source);
                 }
                 // 首次初始化时返回采样率
-                if !sent_init { let _ = init_tx.send(Ok(sample_rate)); sent_init = true; }
+                if !sent_init { let _ = init_tx.send(Ok(analysis_sample_rate)); sent_init = true; }
 
                 // 开始流并进入捕获循环；任何错误或检测到默认设备变更将导致跳出并重建
                 let _ = audio_client.Start();
@@ -207,7 +297,21 @@ impl AudioService {
                             } else {
                                 mono.resize(num_frames as usize, 0.0);
                             }
-                            let _ = frames_tx.try_send(mono);
+                            let analysis_frames = downsampler.process(&mono);
+                            if !analysis_frames.is_empty() && frames_tx.try_send(analysis_frames).is_err() {
+                                dropped_packets += 1;
+                                if last_drop_log.elapsed() >= Duration::from_secs(1) {
+                                    let message = format!(
+                                        "[AUDIO] analysis queue overrun: dropped_packets={} input_rate={}Hz analysis_rate={}Hz",
+                                        dropped_packets,
+                                        sample_rate,
+                                        analysis_sample_rate,
+                                    );
+                                    eprintln!("{}", message);
+                                    append_log_line(&message);
+                                    last_drop_log = std::time::Instant::now();
+                                }
+                            }
                         }
 
                         let _ = capture_client.ReleaseBuffer(num_frames);
